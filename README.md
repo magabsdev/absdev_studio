@@ -58,7 +58,3 @@ The Artisan workspace scans the currently selected Laravel project with `artisan
 ## Terminal fonts
 
 The embedded terminal automatically prefers installed Nerd Font variants (including MesloLGS NF, JetBrains Mono Nerd Font, Caskaydia Cove Nerd Font, Hack Nerd Font and FiraCode Nerd Font) so Powerline and shell-prompt glyphs render correctly. It falls back to Menlo when no compatible Nerd Font is installed.
-
-## Project Knowledge Base
-
-ABSDEV Studio includes a project-scoped Knowledge Base backed by Core Data. Documents support priorities, manual ordering, full-text search, autosave, attachments, duplication, deletion, and portable `.absdevknowledge` import/export packages. The Core Data store and attachment files are held in Application Support and are partitioned by the stable project UUID.

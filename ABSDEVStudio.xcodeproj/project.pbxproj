@@ -7,10 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		KB0000010000000000000001 /* KnowledgeBase.swift in Sources */ = {isa = PBXBuildFile; fileRef = KB0000020000000000000001 /* KnowledgeBase.swift */; };
-		KB0000010000000000000002 /* KnowledgeBaseView.swift in Sources */ = {isa = PBXBuildFile; fileRef = KB0000020000000000000002 /* KnowledgeBaseView.swift */; };
 		F10000000000000000000001 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = F10000000000000000000002 /* SwiftTerm */; };
 		B10000000000000000000002 /* BrandViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* BrandViews.swift */; };
+		KB0000010000000000000001 /* KnowledgeBase.swift in Sources */ = {isa = PBXBuildFile; fileRef = KB0000020000000000000001 /* KnowledgeBase.swift */; };
 		B10000000000000000000004 /* ABSDEVStudioDocument.icns in Resources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* ABSDEVStudioDocument.icns */; };
 		0DACCA8DEA027B0147E30EEE /* FeatureViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D756439CB8C6D97527D2099 /* FeatureViews.swift */; };
 		0DF4F4C6D74E4F9B71B6707B /* ABSDEVStudioApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 151859DB767965542C5506EF /* ABSDEVStudioApp.swift */; };
@@ -28,9 +27,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		KB0000020000000000000001 /* KnowledgeBase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnowledgeBase.swift; sourceTree = "<group>"; };
-		KB0000020000000000000002 /* KnowledgeBaseView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnowledgeBaseView.swift; sourceTree = "<group>"; };
 		B10000000000000000000001 /* BrandViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrandViews.swift; sourceTree = "<group>"; };
+		KB0000020000000000000001 /* KnowledgeBase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnowledgeBase.swift; sourceTree = "<group>"; };
 		B10000000000000000000003 /* ABSDEVStudioDocument.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = ABSDEVStudioDocument.icns; sourceTree = "<group>"; };
 		09D0AE97EB146CB4AF71E000 /* AppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStore.swift; sourceTree = "<group>"; };
 		AA0000020000000000000001 /* ContainerModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContainerModels.swift; sourceTree = "<group>"; };
@@ -83,12 +81,11 @@
 			isa = PBXGroup;
 			children = (
 				09D0AE97EB146CB4AF71E000 /* AppStore.swift */,
-				KB0000020000000000000001 /* KnowledgeBase.swift */,
-				KB0000020000000000000002 /* KnowledgeBaseView.swift */,
 				AA0000020000000000000001 /* ContainerModels.swift */,
 				AA0000020000000000000002 /* ContainerStore.swift */,
 				AA0000020000000000000003 /* ContainersView.swift */,
 				B10000000000000000000001 /* BrandViews.swift */,
+				KB0000020000000000000001 /* KnowledgeBase.swift */,
 				0D756439CB8C6D97527D2099 /* FeatureViews.swift */,
 				151859DB767965542C5506EF /* ABSDEVStudioApp.swift */,
 				78FD430803560F137BDECEE8 /* Models.swift */,
@@ -190,12 +187,11 @@
 			buildActionMask = 2147483647;
 			files = (
 				62D168663CE0664E79905E49 /* AppStore.swift in Sources */,
-				KB0000010000000000000001 /* KnowledgeBase.swift in Sources */,
-				KB0000010000000000000002 /* KnowledgeBaseView.swift in Sources */,
 				AA0000010000000000000001 /* ContainerModels.swift in Sources */,
 				AA0000010000000000000002 /* ContainerStore.swift in Sources */,
 				AA0000010000000000000003 /* ContainersView.swift in Sources */,
 				B10000000000000000000002 /* BrandViews.swift in Sources */,
+				KB0000010000000000000001 /* KnowledgeBase.swift in Sources */,
 				0DACCA8DEA027B0147E30EEE /* FeatureViews.swift in Sources */,
 				0DF4F4C6D74E4F9B71B6707B /* ABSDEVStudioApp.swift in Sources */,
 				C28E3B592A560C32484F497E /* Models.swift in Sources */,

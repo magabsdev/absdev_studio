@@ -82,7 +82,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .databaseConsole: .cyan
         case .terminal: .green
         case .intelligence: .pink
-        case .knowledgeBase: .indigo
+        case .knowledgeBase: .purple
         case .sail: .blue
         case .logs: .yellow
         case .doctor: .red
