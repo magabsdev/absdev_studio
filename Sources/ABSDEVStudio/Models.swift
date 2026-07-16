@@ -33,6 +33,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     case tinker = "Tinker"
     case terminal = "Terminal"
     case intelligence = "Project Intelligence"
+    case knowledgeBase = "Knowledge Base"
     case sail = "Sail"
     case logs = "Logs"
     case doctor = "Project Doctor"
@@ -57,6 +58,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .databaseConsole: "cylinder.split.1x2.fill"
         case .terminal: "terminal.fill"
         case .intelligence: "sparkles.rectangle.stack.fill"
+        case .knowledgeBase: "books.vertical.fill"
         case .sail: "sailboat.fill"
         case .logs: "doc.text.magnifyingglass"
         case .doctor: "stethoscope"
@@ -80,6 +82,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .databaseConsole: .cyan
         case .terminal: .green
         case .intelligence: .pink
+        case .knowledgeBase: .indigo
         case .sail: .blue
         case .logs: .yellow
         case .doctor: .red

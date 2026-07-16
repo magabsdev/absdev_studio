@@ -336,6 +336,7 @@ private struct DetailRouter: View {
         case .databaseConsole: DatabaseConsoleView()
         case .terminal: TerminalWorkspaceView()
         case .intelligence: ProjectIntelligenceView()
+        case .knowledgeBase: KnowledgeBaseView()
         case .sail: SailView()
         case .logs: LogsView()
         case .doctor: DoctorView()
