@@ -16,6 +16,7 @@ import UniformTypeIdentifiers
   @NSManaged var createdAt: Date
   @NSManaged var updatedAt: Date
   @NSManaged var attachments: Set<KBAttachment>
+  @NSManaged var richTextData: Data?
 }
 @objc(KBAttachment) final class KBAttachment: NSManagedObject, Identifiable {
   @NSManaged var id: UUID
@@ -24,6 +25,7 @@ import UniformTypeIdentifiers
   @NSManaged var size: Int64
   @NSManaged var checksum: String
   @NSManaged var createdAt: Date
+  @NSManaged var data: Data?
   @NSManaged var document: KBDocument
 }
 
@@ -49,15 +51,97 @@ enum KBSort: String, CaseIterable, Identifiable {
 
 final class KBPersistence {
   static let shared = KBPersistence()
-  let container: NSPersistentContainer
+
+  let container: NSPersistentCloudKitContainer
+  private(set) var cloudSyncEnabled = false
+  private(set) var startupError: String?
+
   init(memory: Bool = false) {
-    container = NSPersistentContainer(name: "ABSDEVKnowledge", managedObjectModel: Self.model())
-    let d = NSPersistentStoreDescription()
-    d.type = memory ? NSInMemoryStoreType : NSSQLiteStoreType
-    if !memory { d.url = Self.support.appendingPathComponent("KnowledgeBase.sqlite") }
-    container.persistentStoreDescriptions = [d]
-    container.loadPersistentStores { _, e in if let e { fatalError(e.localizedDescription) } }
+    let model = Self.model()
+    let primary = NSPersistentCloudKitContainer(name: "ABSDEVKnowledge", managedObjectModel: model)
+    let storeURL = Self.support.appendingPathComponent("KnowledgeBase.sqlite")
+
+    let cloudDescription = Self.storeDescription(
+      memory: memory,
+      url: storeURL,
+      cloudKitEnabled: !memory
+    )
+    primary.persistentStoreDescriptions = [cloudDescription]
+
+    var cloudError: Error?
+    primary.loadPersistentStores { _, error in
+      cloudError = error
+    }
+
+    if let cloudError, !memory {
+      let nsError = cloudError as NSError
+      NSLog(
+        "ABSDEV Knowledge Base iCloud store failed to load: %@ (%@)",
+        nsError.localizedDescription,
+        nsError.userInfo.description
+      )
+
+      // Keep the user's existing database available even when CloudKit is not
+      // configured for the current signing team or iCloud account. The same
+      // SQLite store is opened locally, so no documents are discarded.
+      let local = NSPersistentCloudKitContainer(name: "ABSDEVKnowledge", managedObjectModel: model)
+      local.persistentStoreDescriptions = [
+        Self.storeDescription(memory: false, url: storeURL, cloudKitEnabled: false)
+      ]
+
+      var localError: Error?
+      local.loadPersistentStores { _, error in
+        localError = error
+      }
+
+      if let localError {
+        let localNSError = localError as NSError
+        startupError = "Knowledge Base could not be opened: \(localNSError.localizedDescription)"
+        NSLog(
+          "ABSDEV Knowledge Base local fallback failed: %@ (%@)",
+          localNSError.localizedDescription,
+          localNSError.userInfo.description
+        )
+      } else {
+        startupError = "iCloud sync is unavailable. Documents are open locally."
+      }
+      container = local
+    } else {
+      container = primary
+      cloudSyncEnabled = !memory
+    }
+
     container.viewContext.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
+    container.viewContext.automaticallyMergesChangesFromParent = true
+    container.viewContext.transactionAuthor = "ABSDEVStudio"
+  }
+
+  private static func storeDescription(
+    memory: Bool,
+    url: URL,
+    cloudKitEnabled: Bool
+  ) -> NSPersistentStoreDescription {
+    let description = NSPersistentStoreDescription()
+    description.type = memory ? NSInMemoryStoreType : NSSQLiteStoreType
+    description.shouldAddStoreAsynchronously = false
+    description.shouldMigrateStoreAutomatically = true
+    description.shouldInferMappingModelAutomatically = true
+
+    if !memory {
+      description.url = url
+      description.setOption(true as NSNumber, forKey: NSPersistentHistoryTrackingKey)
+      description.setOption(
+        true as NSNumber,
+        forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey
+      )
+      if cloudKitEnabled {
+        description.cloudKitContainerOptions = NSPersistentCloudKitContainerOptions(
+          containerIdentifier: "iCloud.com.absdev.studio"
+        )
+      }
+    }
+
+    return description
   }
   static var support: URL {
     let u = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -89,17 +173,29 @@ final class KBPersistence {
     f.name = "KBAttachment"
     f.managedObjectClassName = NSStringFromClass(KBAttachment.self)
     d.properties = [
-      a("id", .UUIDAttributeType), a("projectID", .UUIDAttributeType),
+      a("id", .UUIDAttributeType, false, UUID()), a("projectID", .UUIDAttributeType, false, UUID()),
       a("title", .stringAttributeType, false, "Untitled Document"),
       a("text", .stringAttributeType, false, ""), a("priority", .integer16AttributeType, false, 2),
-      a("order", .integer32AttributeType, false, 0), a("createdAt", .dateAttributeType),
-      a("updatedAt", .dateAttributeType),
+      a("order", .integer32AttributeType, false, 0),
+      a("createdAt", .dateAttributeType, false, Date()),
+      a("updatedAt", .dateAttributeType, false, Date()),
+      a("richTextData", .binaryDataAttributeType, true),
     ]
     f.properties = [
-      a("id", .UUIDAttributeType), a("name", .stringAttributeType),
-      a("relativePath", .stringAttributeType), a("size", .integer64AttributeType, false, 0),
-      a("checksum", .stringAttributeType, false, ""), a("createdAt", .dateAttributeType),
+      a("id", .UUIDAttributeType, false, UUID()),
+      a("name", .stringAttributeType, false, "Attachment"),
+      a("relativePath", .stringAttributeType, false, ""),
+      a("size", .integer64AttributeType, false, 0),
+      a("checksum", .stringAttributeType, false, ""),
+      a("createdAt", .dateAttributeType, false, Date()),
+      a("data", .binaryDataAttributeType, true),
     ]
+    if let richText = d.properties.first(where: { $0.name == "richTextData" }) as? NSAttributeDescription {
+      richText.allowsExternalBinaryDataStorage = true
+    }
+    if let attachmentData = f.properties.first(where: { $0.name == "data" }) as? NSAttributeDescription {
+      attachmentData.allowsExternalBinaryDataStorage = true
+    }
     let ds = NSRelationshipDescription()
     let fd = NSRelationshipDescription()
     ds.name = "attachments"
@@ -108,7 +204,7 @@ final class KBPersistence {
     ds.deleteRule = .cascadeDeleteRule
     fd.name = "document"
     fd.destinationEntity = d
-    fd.minCount = 1
+    fd.minCount = 0
     fd.maxCount = 1
     fd.deleteRule = .nullifyDeleteRule
     ds.inverseRelationship = fd
@@ -206,10 +302,12 @@ struct KBManifest: Codable {
     } catch { self.error = error.localizedDescription }
   }
   func create() {
+    let documentID = UUID()
+    let defaultTitle = "Untitled Document"
     let d = KBDocument(context: context)
-    d.id = UUID()
+    d.id = documentID
     d.projectID = projectID
-    d.title = "Untitled Document"
+    d.title = defaultTitle
     d.text = ""
     d.priority = KBPriority.normal.rawValue
     d.order = (documents.map(\.order).max() ?? -1) + 1
@@ -217,11 +315,19 @@ struct KBManifest: Codable {
     d.updatedAt = Date()
     save()
     reload()
-    selection = d.id
+
+    // Select the newly persisted document and guarantee its visible title is never blank.
+    if let created = documents.first(where: { $0.id == documentID }),
+       created.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    {
+      created.title = defaultTitle
+      save()
+    }
+    selection = documentID
   }
   func update(title: String? = nil, text: String? = nil, priority: KBPriority? = nil) {
     guard let d = selected else { return }
-    if let title { d.title = title.isEmpty ? "Untitled Document" : title }
+    if let title { d.title = title }
     if let text { d.text = text }
     if let priority { d.priority = priority.rawValue }
     d.updatedAt = Date()
@@ -302,6 +408,11 @@ struct KBManifest: Codable {
     d.createdAt = Date()
     d.updatedAt = Date()
     for a in source.attachments { try? clone(a, to: d) }
+    let sourceArchive = richTextArchiveURL(for: source.id)
+    let destinationArchive = richTextArchiveURL(for: d.id)
+    if FileManager.default.fileExists(atPath: sourceArchive.path) {
+      try? FileManager.default.copyItem(at: sourceArchive, to: destinationArchive)
+    }
     save()
     reload()
     selection = d.id
@@ -371,7 +482,19 @@ struct KBManifest: Codable {
       id.uuidString)
   }
   func attachmentURL(_ attachment: KBAttachment) -> URL {
-    KBPersistence.attachments.appendingPathComponent(attachment.relativePath)
+    let localURL = KBPersistence.attachments.appendingPathComponent(attachment.relativePath)
+    if !FileManager.default.fileExists(atPath: localURL.path), let data = attachment.data {
+      try? FileManager.default.createDirectory(
+        at: localURL.deletingLastPathComponent(), withIntermediateDirectories: true
+      )
+      try? data.write(to: localURL, options: .atomic)
+    }
+    return localURL
+  }
+  func richTextArchiveURL(for documentID: UUID) -> URL {
+    let directory = folder(documentID)
+    try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory.appendingPathComponent("document-rich-text.archive")
   }
   private func url(_ a: KBAttachment) -> URL { attachmentURL(a) }
   private func add(_ source: URL, to d: KBDocument) throws -> KBAttachment {
@@ -387,7 +510,8 @@ struct KBManifest: Codable {
     a.name = source.lastPathComponent
     a.relativePath = "\(projectID.uuidString)/\(d.id.uuidString)/\(stored)"
     a.size = Int64((try? target.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
-    a.checksum = try SHA256.hash(data: Data(contentsOf: target)).map { String(format: "%02x", $0) }
+    a.data = try Data(contentsOf: target)
+    a.checksum = try SHA256.hash(data: a.data ?? Data()).map { String(format: "%02x", $0) }
       .joined()
     a.createdAt = Date()
     a.document = d
@@ -405,6 +529,7 @@ struct KBManifest: Codable {
     n.name = a.name
     n.relativePath = "\(projectID.uuidString)/\(d.id.uuidString)/\(name)"
     n.size = a.size
+    n.data = a.data ?? (try? Data(contentsOf: url(a)))
     n.checksum = a.checksum
     n.createdAt = Date()
     n.document = d
@@ -506,6 +631,7 @@ struct KBManifest: Codable {
         a.name = f.name
         a.relativePath = "\(projectID.uuidString)/\(x.id.uuidString)/\(target.lastPathComponent)"
         a.size = f.size
+        a.data = FileManager.default.fileExists(atPath: target.path) ? try? Data(contentsOf: target) : nil
         a.checksum = f.checksum
         a.createdAt = f.createdAt
         a.document = item
@@ -560,6 +686,11 @@ private struct KBWorkspace: View {
   @FocusState private var titleFocused: Bool
   @FocusState private var searchFocused: Bool
   @State private var inlineInsertion: KBInlineInsertion?
+  @State private var formatCommand: KBFormatCommand?
+  @State private var selectedFontFamily = "System"
+  @State private var selectedFontSize: Double = 14
+  @State private var selectedTextColor = Color.white
+  @State private var selectedHighlightColor = Color.clear
 
   var body: some View {
     VStack(spacing: 0) {
@@ -568,15 +699,15 @@ private struct KBWorkspace: View {
       HSplitView {
         documentNavigator
           .frame(
-            minWidth: 260,
-            idealWidth: 280,
-            maxWidth: 680,
+            minWidth: 200,
+            idealWidth: 220,
+            maxWidth: 300,
             maxHeight: .infinity,
             alignment: .top
           )
 
         documentEditor
-          .frame(minWidth: 700, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+          .frame(minWidth: 600, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
       }
     }
     .alert(
@@ -818,13 +949,10 @@ private struct KBWorkspace: View {
         }
       }
 
-      Text(
-        document.text.isEmpty
-          ? "No content" : document.text.replacingOccurrences(of: "\n", with: " ")
-      )
-      .font(.caption)
-      .foregroundStyle(.secondary)
-      .lineLimit(2)
+      Text(documentBodyPreview(document.text))
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
 
       HStack {
         Text(KBPriority(rawValue: document.priority)?.name ?? "Normal")
@@ -835,6 +963,22 @@ private struct KBWorkspace: View {
       .foregroundStyle(.tertiary)
     }
     .padding(.vertical, 6)
+  }
+
+
+  private func documentBodyPreview(_ text: String) -> String {
+    let withoutAttachmentTokens = text.replacingOccurrences(
+      of: #"\[\[attachment:[0-9A-Fa-f-]+\]\]"#,
+      with: "",
+      options: .regularExpression
+    )
+    let collapsed = withoutAttachmentTokens
+      .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+
+    guard !collapsed.isEmpty else { return "No content" }
+    let preview = String(collapsed.prefix(30))
+    return collapsed.count > 30 ? preview + "…" : preview
   }
 
   @ViewBuilder private var documentEditor: some View {
@@ -939,42 +1083,154 @@ private struct KBWorkspace: View {
               .foregroundStyle(.secondary)
           }
 
-          HStack {
-            Button("Insert File…", systemImage: "paperclip") {
-              let files = store.addFiles()
-              if !files.isEmpty { inlineInsertion = KBInlineInsertion(attachments: files) }
-            }
-            .buttonStyle(.bordered)
-            Text("Files are inserted at the current cursor position.")
-              .font(.caption)
-              .foregroundStyle(.secondary)
-            Spacer()
-            if !document.attachments.isEmpty {
+          VStack(spacing: 8) {
+            HStack(spacing: 8) {
+              Button("Insert File…", systemImage: "paperclip") {
+                let files = store.addFiles()
+                if !files.isEmpty { inlineInsertion = KBInlineInsertion(attachments: files) }
+              }
+              .buttonStyle(.bordered)
+
+              Divider().frame(height: 20)
+
               Menu {
-                ForEach(Array(document.attachments).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }) { attachment in
+                ForEach(["System", "Rounded", "Serif", "Monospaced"], id: \.self) { family in
                   Button {
-                    store.download(attachment)
+                    selectedFontFamily = family
+                    formatCommand = .fontFamily(family)
                   } label: {
-                    Label(attachment.name, systemImage: "arrow.down.circle")
+                    if selectedFontFamily == family { Label(family, systemImage: "checkmark") }
+                    else { Text(family) }
                   }
                 }
               } label: {
-                Label("Download Attachment", systemImage: "square.and.arrow.down")
+                Label(selectedFontFamily, systemImage: "textformat")
+                  .lineLimit(1)
+                  .frame(minWidth: 108, alignment: .leading)
+              }
+              .buttonStyle(.bordered)
+              .controlSize(.small)
+              .help("Font")
+
+              Menu {
+                ForEach([10, 11, 12, 13, 14, 16, 18, 20, 24, 28, 32, 36, 48], id: \.self) { size in
+                  Button("\(size) pt") {
+                    selectedFontSize = Double(size)
+                    formatCommand = .fontSize(CGFloat(size))
+                  }
+                }
+              } label: {
+                Text("\(Int(selectedFontSize)) pt")
+                  .monospacedDigit()
+                  .frame(minWidth: 50)
+              }
+              .buttonStyle(.bordered)
+              .controlSize(.small)
+              .help("Font size")
+
+              ControlGroup {
+                Button { formatCommand = .bold } label: { Image(systemName: "bold") }
+                  .help("Bold")
+                Button { formatCommand = .italic } label: { Image(systemName: "italic") }
+                  .help("Italic")
+                Button { formatCommand = .underline } label: { Image(systemName: "underline") }
+                  .help("Underline")
+              }
+              .controlSize(.small)
+
+              Menu {
+                ForEach(KBTextPalette.allCases, id: \.self) { item in
+                  Button {
+                    selectedTextColor = item.color
+                    formatCommand = .textColor(item.nsColor)
+                  } label: { Label(item.title, systemImage: "circle.fill") }
+                }
+              } label: {
+                HStack(spacing: 5) {
+                  Image(systemName: "character.cursor.ibeam")
+                  Circle().fill(selectedTextColor).frame(width: 10, height: 10)
+                    .overlay(Circle().stroke(.secondary, lineWidth: 0.5))
+                }
+              }
+              .buttonStyle(.bordered)
+              .controlSize(.small)
+              .help("Text colour")
+
+              Menu {
+                Button {
+                  selectedHighlightColor = .clear
+                  formatCommand = .highlightColor(.clear)
+                } label: { Label("No Highlight", systemImage: "nosign") }
+                Divider()
+                ForEach(KBHighlightPalette.allCases, id: \.self) { item in
+                  Button {
+                    selectedHighlightColor = item.color
+                    formatCommand = .highlightColor(item.nsColor)
+                  } label: { Label(item.title, systemImage: "highlighter") }
+                }
+              } label: {
+                HStack(spacing: 5) {
+                  Image(systemName: "highlighter")
+                  RoundedRectangle(cornerRadius: 2)
+                    .fill(selectedHighlightColor == .clear ? Color.secondary.opacity(0.18) : selectedHighlightColor)
+                    .frame(width: 14, height: 8)
+                    .overlay(RoundedRectangle(cornerRadius: 2).stroke(.secondary, lineWidth: 0.5))
+                }
+              }
+              .buttonStyle(.bordered)
+              .controlSize(.small)
+              .help("Highlight colour")
+
+              Menu {
+                Button("Align Left") { formatCommand = .alignment(.left) }
+                Button("Centre") { formatCommand = .alignment(.center) }
+                Button("Align Right") { formatCommand = .alignment(.right) }
+                Button("Justify") { formatCommand = .alignment(.justified) }
+              } label: {
+                Image(systemName: "text.alignleft")
               }
               .menuStyle(.borderlessButton)
-            }
-          }
 
-          KBInlineDocumentEditor(
-            text: Binding(
-              get: { document.text },
-              set: { store.update(text: $0) }
-            ),
-            attachments: document.attachments,
-            attachmentURL: store.attachmentURL,
-            insertion: $inlineInsertion
-          )
-          .frame(maxWidth: .infinity, maxHeight: .infinity)
+              Spacer()
+
+              if !document.attachments.isEmpty {
+                Menu {
+                  ForEach(Array(document.attachments).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }) { attachment in
+                    Button {
+                      store.download(attachment)
+                    } label: {
+                      Label(attachment.name, systemImage: "arrow.down.circle")
+                    }
+                  }
+                } label: {
+                  Label("Download Attachment", systemImage: "square.and.arrow.down")
+                }
+                .menuStyle(.borderlessButton)
+              }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(Color(nsColor: .windowBackgroundColor))
+
+            KBInlineDocumentEditor(
+              text: Binding(
+                get: { document.text },
+                set: { store.update(text: $0) }
+              ),
+              attachments: document.attachments,
+              attachmentURL: store.attachmentURL,
+              richTextData: Binding(
+                get: { document.richTextData },
+                set: { document.richTextData = $0; store.update() }
+              ),
+              insertion: $inlineInsertion,
+              formatCommand: $formatCommand
+            )
+            .background(Color.black)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(nsColor: .separatorColor)))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+          }
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -991,6 +1247,53 @@ private struct KBWorkspace: View {
   }
 }
 
+private enum KBTextPalette: String, CaseIterable {
+  case white, lightGray, red, orange, yellow, green, cyan, blue, purple
+  var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+  var color: Color {
+    switch self {
+    case .white: return .white
+    case .lightGray: return .gray
+    case .red: return .red
+    case .orange: return .orange
+    case .yellow: return .yellow
+    case .green: return .green
+    case .cyan: return .cyan
+    case .blue: return .blue
+    case .purple: return .purple
+    }
+  }
+  var nsColor: NSColor { NSColor(color) }
+}
+
+private enum KBHighlightPalette: String, CaseIterable {
+  case yellow, orange, green, cyan, blue, purple, red
+  var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+  var color: Color {
+    switch self {
+    case .yellow: return .yellow.opacity(0.65)
+    case .orange: return .orange.opacity(0.65)
+    case .green: return .green.opacity(0.55)
+    case .cyan: return .cyan.opacity(0.55)
+    case .blue: return .blue.opacity(0.55)
+    case .purple: return .purple.opacity(0.55)
+    case .red: return .red.opacity(0.55)
+    }
+  }
+  var nsColor: NSColor { NSColor(color) }
+}
+
+private enum KBFormatCommand {
+  case fontFamily(String)
+  case fontSize(CGFloat)
+  case bold
+  case italic
+  case underline
+  case textColor(NSColor)
+  case highlightColor(NSColor)
+  case alignment(NSTextAlignment)
+}
+
 private struct KBInlineInsertion: Equatable {
   let id = UUID()
   let attachments: [KBAttachment]
@@ -1001,7 +1304,9 @@ private struct KBInlineDocumentEditor: NSViewRepresentable {
   @Binding var text: String
   let attachments: Set<KBAttachment>
   let attachmentURL: (KBAttachment) -> URL
+  @Binding var richTextData: Data?
   @Binding var insertion: KBInlineInsertion?
+  @Binding var formatCommand: KBFormatCommand?
 
   func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -1010,7 +1315,8 @@ private struct KBInlineDocumentEditor: NSViewRepresentable {
     scroll.hasVerticalScroller = true
     scroll.autohidesScrollers = true
     scroll.borderType = .noBorder
-    scroll.drawsBackground = false
+    scroll.drawsBackground = true
+    scroll.backgroundColor = .black
 
     let editor = NSTextView()
     editor.isRichText = true
@@ -1019,11 +1325,13 @@ private struct KBInlineDocumentEditor: NSViewRepresentable {
     editor.isAutomaticLinkDetectionEnabled = true
     editor.textContainerInset = NSSize(width: 12, height: 12)
     editor.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
-    editor.backgroundColor = .textBackgroundColor
+    editor.backgroundColor = .black
+    editor.textColor = .white
+    editor.insertionPointColor = .white
     editor.delegate = context.coordinator
     scroll.documentView = editor
     context.coordinator.editor = editor
-    context.coordinator.render(text)
+    context.coordinator.loadInitialContent(fallback: text)
     return scroll
   }
 
@@ -1037,6 +1345,10 @@ private struct KBInlineDocumentEditor: NSViewRepresentable {
       context.coordinator.lastInsertionID = insertion.id
       context.coordinator.insert(insertion.attachments)
       DispatchQueue.main.async { self.insertion = nil }
+    }
+    if let formatCommand {
+      context.coordinator.apply(formatCommand)
+      DispatchQueue.main.async { self.formatCommand = nil }
     }
     editor.isEditable = true
   }
@@ -1053,11 +1365,199 @@ private struct KBInlineDocumentEditor: NSViewRepresentable {
     func textDidBeginEditing(_ notification: Notification) { isEditing = true }
     func textDidEndEditing(_ notification: Notification) { isEditing = false }
     func textDidChange(_ notification: Notification) {
-      guard !isRendering else { return }
+      guard !isRendering, !isApplyingFormat else { return }
       parent.text = serialisedText()
+      saveArchive()
     }
 
     private var isRendering = false
+    private var isApplyingFormat = false
+
+    func loadInitialContent(fallback: String) {
+      guard let editor else { return }
+      if let data = parent.richTextData,
+        let archived = try? NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(data) as? NSAttributedString,
+        !archived.string.contains("[[attachment:")
+      {
+        isRendering = true
+        editor.textStorage?.setAttributedString(sanitisedArchive(archived))
+        isRendering = false
+      } else {
+        let cleaned = sanitisedSource(fallback)
+        render(cleaned)
+        if cleaned != fallback {
+          parent.text = cleaned
+          saveArchive()
+        }
+      }
+    }
+
+    private func sanitisedSource(_ source: String) -> String {
+      let validIDs = Set(parent.attachments.map { $0.id.uuidString.lowercased() })
+      let pattern = #"\[\[attachment:([0-9A-Fa-f-]{36})\]\]"#
+      guard let regex = try? NSRegularExpression(pattern: pattern) else { return source }
+      let ns = source as NSString
+      let result = NSMutableString(string: source)
+      for match in regex.matches(in: source, range: NSRange(location: 0, length: ns.length)).reversed() {
+        let id = ns.substring(with: match.range(at: 1)).lowercased()
+        if !validIDs.contains(id) { result.replaceCharacters(in: match.range, with: "") }
+      }
+      return (result as String).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func sanitisedArchive(_ archived: NSAttributedString) -> NSAttributedString {
+      let value = NSMutableAttributedString(attributedString: archived)
+      let validIDs = Set(parent.attachments.map { $0.id.uuidString.lowercased() })
+      value.enumerateAttribute(Self.attachmentIDKey, in: NSRange(location: 0, length: value.length), options: [.reverse]) { raw, range, _ in
+        guard let id = (raw as? String)?.lowercased(), validIDs.contains(id) else {
+          if raw != nil { value.deleteCharacters(in: range) }
+          return
+        }
+      }
+      value.addAttribute(.foregroundColor, value: NSColor.white, range: NSRange(location: 0, length: value.length))
+      return value
+    }
+
+    private func saveArchive() {
+      guard let storage = editor?.textStorage else { return }
+      do {
+        let data = try NSKeyedArchiver.archivedData(
+          withRootObject: NSAttributedString(attributedString: storage),
+          requiringSecureCoding: false
+        )
+        parent.richTextData = data
+      } catch {
+        // Plain text remains safely stored in Core Data even if rich-text persistence fails.
+      }
+    }
+
+    func apply(_ command: KBFormatCommand) {
+      guard let editor, editor.textStorage != nil else { return }
+      let selected = editor.selectedRange()
+      let range = selected.length > 0 ? selected : NSRange(location: selected.location, length: 0)
+
+      isApplyingFormat = true
+      defer { isApplyingFormat = false }
+
+      switch command {
+      case .fontFamily(let family):
+        applyFont(in: range) { current in
+          self.safeFont(family: family, size: current.pointSize, traits: current.fontDescriptor.symbolicTraits)
+        }
+      case .fontSize(let size):
+        applyFont(in: range) { current in
+          self.safeFont(family: current.familyName ?? "System", size: max(8, min(size, 96)), traits: current.fontDescriptor.symbolicTraits)
+        }
+      case .bold:
+        applyFont(in: range) { current in
+          NSFontManager.shared.convert(current, toHaveTrait: .boldFontMask)
+        }
+      case .italic:
+        applyFont(in: range) { current in
+          NSFontManager.shared.convert(current, toHaveTrait: .italicFontMask)
+        }
+      case .underline:
+        toggleAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, in: range)
+      case .textColor(let colour):
+        applyAttribute(.foregroundColor, value: colour, in: range)
+      case .highlightColor(let colour):
+        if colour.alphaComponent <= 0.01 {
+          removeAttribute(.backgroundColor, in: range)
+        } else {
+          applyAttribute(.backgroundColor, value: colour, in: range)
+        }
+      case .alignment(let alignment):
+        applyParagraphAlignment(alignment, in: range)
+      }
+      // Formatting changes attributed text only. Do not rewrite the plain-text binding here:
+      // doing so re-enters SwiftUI's update cycle while the command is still pending.
+      saveArchive()
+      editor.window?.makeFirstResponder(editor)
+    }
+
+    private func safeFont(family: String, size: CGFloat, traits: NSFontDescriptor.SymbolicTraits) -> NSFont {
+      let design: NSFontDescriptor.SystemDesign
+      switch family {
+      case "Rounded": design = .rounded
+      case "Serif": design = .serif
+      case "Monospaced": design = .monospaced
+      default: design = .default
+      }
+      let base = NSFont.systemFont(ofSize: size).fontDescriptor
+      let designed = base.withDesign(design) ?? base
+      let descriptor = designed.withSymbolicTraits(traits)
+      return NSFont(descriptor: descriptor, size: size) ?? NSFont.systemFont(ofSize: size)
+    }
+
+    private func effectiveRange(_ range: NSRange) -> NSRange {
+      guard let editor else { return range }
+      if range.length > 0 { return range }
+      editor.typingAttributes[.font] = editor.typingAttributes[.font]
+        ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+      return range
+    }
+
+    private func applyFont(in range: NSRange, transform: (NSFont) -> NSFont) {
+      guard let editor, let storage = editor.textStorage else { return }
+      if range.length == 0 {
+        let current = editor.typingAttributes[.font] as? NSFont
+          ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        editor.typingAttributes[.font] = transform(current)
+        return
+      }
+      storage.enumerateAttribute(.font, in: range) { value, subrange, _ in
+        let current = value as? NSFont ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        storage.addAttribute(.font, value: transform(current), range: subrange)
+      }
+    }
+
+    private func applyAttribute(_ key: NSAttributedString.Key, value: Any, in range: NSRange) {
+      guard let editor, let storage = editor.textStorage else { return }
+      if range.length == 0 {
+        editor.typingAttributes[key] = value
+      } else {
+        storage.addAttribute(key, value: value, range: range)
+      }
+    }
+
+    private func removeAttribute(_ key: NSAttributedString.Key, in range: NSRange) {
+      guard let editor, let storage = editor.textStorage else { return }
+      if range.length == 0 {
+        editor.typingAttributes.removeValue(forKey: key)
+      } else {
+        storage.removeAttribute(key, range: range)
+      }
+    }
+
+    private func toggleAttribute(_ key: NSAttributedString.Key, value: Any, in range: NSRange) {
+      guard let editor, let storage = editor.textStorage else { return }
+      if range.length == 0 {
+        if editor.typingAttributes[key] != nil { editor.typingAttributes.removeValue(forKey: key) }
+        else { editor.typingAttributes[key] = value }
+        return
+      }
+      let current = storage.attribute(key, at: range.location, effectiveRange: nil)
+      if current == nil { storage.addAttribute(key, value: value, range: range) }
+      else { storage.removeAttribute(key, range: range) }
+    }
+
+    private func applyParagraphAlignment(_ alignment: NSTextAlignment, in range: NSRange) {
+      guard let editor, let storage = editor.textStorage else { return }
+      if range.length == 0 {
+        let style = (editor.typingAttributes[.paragraphStyle] as? NSParagraphStyle)?.mutableCopy()
+          as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
+        style.alignment = alignment
+        editor.typingAttributes[.paragraphStyle] = style
+        return
+      }
+      let paragraphRange = (storage.string as NSString).paragraphRange(for: range)
+      storage.enumerateAttribute(.paragraphStyle, in: paragraphRange) { value, subrange, _ in
+        let style = (value as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle
+          ?? NSMutableParagraphStyle()
+        style.alignment = alignment
+        storage.addAttribute(.paragraphStyle, value: style, range: subrange)
+      }
+    }
 
     func render(_ source: String) {
       guard let editor else { return }
@@ -1079,6 +1579,7 @@ private struct KBInlineDocumentEditor: NSViewRepresentable {
       storage.replaceCharacters(in: range, with: value)
       editor.setSelectedRange(NSRange(location: range.location + value.length, length: 0))
       parent.text = serialisedText()
+      saveArchive()
     }
 
     func serialisedText() -> String {
@@ -1121,9 +1622,10 @@ private struct KBInlineDocumentEditor: NSViewRepresentable {
         let idText = ns.substring(with: match.range(at: 1))
         if let id = UUID(uuidString: idText), let item = parent.attachments.first(where: { $0.id == id }) {
           result.append(renderedAttachment(item))
-        } else {
-          result.append(base(ns.substring(with: match.range)))
         }
+        // Orphaned attachment references are intentionally omitted. This can happen when an
+        // attachment is removed, imported without its binary, or an older document contains a
+        // stale token. Raw storage markup must never be shown in the document editor.
         location = NSMaxRange(match.range)
       }
       if location < ns.length { result.append(base(ns.substring(from: location))) }
@@ -1132,8 +1634,8 @@ private struct KBInlineDocumentEditor: NSViewRepresentable {
 
     private func base(_ string: String) -> NSAttributedString {
       NSAttributedString(string: string, attributes: [
-        .font: NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular),
-        .foregroundColor: NSColor.textColor,
+        .font: NSFont.systemFont(ofSize: 14, weight: .regular),
+        .foregroundColor: NSColor.white,
       ])
     }
 
@@ -1164,12 +1666,12 @@ private struct KBInlineDocumentEditor: NSViewRepresentable {
         let block = NSMutableAttributedString()
         block.append(NSAttributedString(string: "\n📄  \(item.name)\n", attributes: [
           .font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold),
-          .foregroundColor: NSColor.labelColor,
+          .foregroundColor: NSColor.white,
         ]))
         block.append(NSAttributedString(string: fileText, attributes: [
           .font: NSFont.monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular),
-          .foregroundColor: NSColor.textColor,
-          .backgroundColor: NSColor.controlBackgroundColor,
+          .foregroundColor: NSColor.white,
+          .backgroundColor: NSColor(calibratedWhite: 0.10, alpha: 1),
         ]))
         if !fileText.hasSuffix("\n") { block.append(NSAttributedString(string: "\n")) }
         block.append(NSAttributedString(string: "\n"))
@@ -1193,7 +1695,7 @@ private struct KBInlineDocumentEditor: NSViewRepresentable {
       block.append(NSAttributedString(attachment: attachment))
       block.append(NSAttributedString(string: "  \(item.name)  •  Use Download Attachment to save a copy\n", attributes: [
         .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium),
-        .foregroundColor: NSColor.secondaryLabelColor,
+        .foregroundColor: NSColor.lightGray,
       ]))
       block.addAttribute(Self.attachmentIDKey, value: identifier, range: NSRange(location: 0, length: block.length))
       return block

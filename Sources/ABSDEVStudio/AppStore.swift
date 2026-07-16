@@ -14,6 +14,7 @@ final class AppStore {
         }
     }
     var selectedSection: AppSection = .overview
+    var sectionNavigationOrder: [String] = AppSection.allCases.map(\.id)
     var commandOutput: [String] = ["ABSDEV Studio ready."]
     var processes: [DevProcess] = [
         DevProcess(name: "Laravel Server", detail: "php artisan serve", symbol: "server.rack", command: "php artisan serve", isRunning: false, output: []),
@@ -109,6 +110,7 @@ final class AppStore {
     @ObservationIgnored private var logTailTask: Task<Void, Never>?
     @ObservationIgnored private let projectsStorageURL: URL
     @ObservationIgnored private let performsStartupDiscovery: Bool
+    @ObservationIgnored private let defaults: UserDefaults
 
     init(
         projectsStorageURL: URL? = nil,
@@ -119,6 +121,12 @@ final class AppStore {
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("ABSDEVStudio/projects.json")
         self.performsStartupDiscovery = performsStartupDiscovery
+        self.defaults = defaults
+        let savedSectionOrder = defaults.stringArray(forKey: "sectionNavigationOrder") ?? []
+        let knownSectionIDs = Set(AppSection.allCases.map(\.id))
+        let validSectionOrder = savedSectionOrder.filter { knownSectionIDs.contains($0) }
+        let missingSectionIDs = AppSection.allCases.map(\.id).filter { !validSectionOrder.contains($0) }
+        sectionNavigationOrder = validSectionOrder + missingSectionIDs
         phpPath = defaults.string(forKey: "phpPath") ?? ""
         editor = defaults.string(forKey: "editor") ?? "Xcode"
         terminal = defaults.string(forKey: "terminal") ?? "Terminal"
@@ -200,13 +208,60 @@ final class AppStore {
     var isDevelopmentRunning: Bool { processes.contains(where: \.isRunning) }
 
     var availableSections: [AppSection] {
-        AppSection.allCases.filter { section in
+        let visible = AppSection.allCases.filter { section in
             switch section {
             case .sail: isSailRunning
             case .servBay: isServBayInstalled
             default: true
             }
         }
+        let savedOrder = sectionNavigationOrder
+        return visible.sorted { lhs, rhs in
+            let left = savedOrder.firstIndex(of: lhs.id) ?? Int.max
+            let right = savedOrder.firstIndex(of: rhs.id) ?? Int.max
+            if left == right {
+                return AppSection.allCases.firstIndex(of: lhs)! < AppSection.allCases.firstIndex(of: rhs)!
+            }
+            return left < right
+        }
+    }
+
+    func moveProject(_ projectID: LaravelProject.ID, before targetID: LaravelProject.ID) {
+        guard projectID != targetID,
+              let sourceIndex = projects.firstIndex(where: { $0.id == projectID }),
+              let targetIndex = projects.firstIndex(where: { $0.id == targetID }) else { return }
+        let project = projects.remove(at: sourceIndex)
+        let destination = min(targetIndex, projects.count)
+        projects.insert(project, at: destination)
+        saveProjects()
+    }
+
+    func moveProjectToEnd(_ projectID: LaravelProject.ID) {
+        guard let sourceIndex = projects.firstIndex(where: { $0.id == projectID }) else { return }
+        let project = projects.remove(at: sourceIndex)
+        projects.append(project)
+        saveProjects()
+    }
+
+    func moveSection(_ section: AppSection, before target: AppSection) {
+        guard section != target else { return }
+        var order = sectionNavigationOrder
+        guard let sourceIndex = order.firstIndex(of: section.id),
+              let targetIndex = order.firstIndex(of: target.id) else { return }
+        let value = order.remove(at: sourceIndex)
+        let destination = min(targetIndex, order.count)
+        order.insert(value, at: destination)
+        sectionNavigationOrder = order
+        defaults.set(order, forKey: "sectionNavigationOrder")
+    }
+
+    func moveSectionToEnd(_ section: AppSection) {
+        var order = sectionNavigationOrder
+        guard let sourceIndex = order.firstIndex(of: section.id) else { return }
+        let value = order.remove(at: sourceIndex)
+        order.append(value)
+        sectionNavigationOrder = order
+        defaults.set(order, forKey: "sectionNavigationOrder")
     }
 
     // MARK: - ServBay

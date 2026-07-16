@@ -94,6 +94,17 @@ private struct SidebarView: View {
                 ForEach(store.projects) { project in
                     ProjectRow(project: project)
                         .tag(project.id)
+                        .draggable(project.id.uuidString) {
+                            ProjectRow(project: project)
+                                .padding(8)
+                                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                        }
+                        .dropDestination(for: String.self) { items, _ in
+                            guard let rawID = items.first,
+                                  let draggedID = UUID(uuidString: rawID) else { return false }
+                            store.moveProject(draggedID, before: project.id)
+                            return true
+                        }
                         .contextMenu {
                             Button("Customize Project Icon…", systemImage: "paintpalette.fill") {
                                 projectBeingCustomized = project
@@ -316,6 +327,17 @@ private struct SectionNavigationView: View {
                     .frame(width: 20)
             }
             .tag(section)
+            .draggable(section.id) {
+                Label(section.rawValue, systemImage: section.symbol)
+                    .padding(8)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+            }
+            .dropDestination(for: String.self) { items, _ in
+                guard let rawID = items.first,
+                      let dragged = AppSection.allCases.first(where: { $0.id == rawID }) else { return false }
+                store.moveSection(dragged, before: section)
+                return true
+            }
         }
         .navigationTitle(store.selectedProject?.name ?? "Laravel")
         .listStyle(.sidebar)
