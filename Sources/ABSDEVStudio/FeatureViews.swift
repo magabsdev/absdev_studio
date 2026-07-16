@@ -489,13 +489,6 @@ struct ArtisanView: View {
             .layoutPriority(1)
         }
         .frame(minWidth: 1050, minHeight: 700, maxHeight: .infinity, alignment: .topLeading)
-        .sheet(isPresented: Binding(
-            get: { store.isCommandProgressPresented },
-            set: { _ in }
-        )) {
-            CommandProgressDialog(store: store)
-                .interactiveDismissDisabled()
-        }
         .task(id: store.selectedProjectID) {
             if store.artisanCommands.isEmpty {
                 await store.refreshArtisanCommands()
@@ -505,7 +498,7 @@ struct ArtisanView: View {
 }
 
 
-private struct CommandProgressDialog: View {
+struct CommandProgressDialog: View {
     let store: AppStore
 
     var body: some View {

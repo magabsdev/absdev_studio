@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Observation
+import UniformTypeIdentifiers
 
 @MainActor
 @Observable
@@ -106,16 +107,31 @@ final class AppStore {
     @ObservationIgnored private var commandRunOutput: [UUID: [String]] = [:]
     @ObservationIgnored private var testCommandRuns: Set<UUID> = []
     @ObservationIgnored private var logTailTask: Task<Void, Never>?
+    @ObservationIgnored private let projectsStorageURL: URL
+    @ObservationIgnored private let performsStartupDiscovery: Bool
 
-    init() {
-        phpPath = UserDefaults.standard.string(forKey: "phpPath") ?? ""
-        editor = UserDefaults.standard.string(forKey: "editor") ?? "Xcode"
-        terminal = UserDefaults.standard.string(forKey: "terminal") ?? "Terminal"
-        detectServBay()
+    init(
+        projectsStorageURL: URL? = nil,
+        performsStartupDiscovery: Bool = true,
+        defaults: UserDefaults = .standard
+    ) {
+        self.projectsStorageURL = projectsStorageURL
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("ABSDEVStudio/projects.json")
+        self.performsStartupDiscovery = performsStartupDiscovery
+        phpPath = defaults.string(forKey: "phpPath") ?? ""
+        editor = defaults.string(forKey: "editor") ?? "Xcode"
+        terminal = defaults.string(forKey: "terminal") ?? "Terminal"
+
+        if performsStartupDiscovery {
+            detectServBay()
+        }
         loadProjects()
         if projects.isEmpty { projects = [.sample] }
         selectedProjectID = projects.first?.id
-        Task { await refreshProject() }
+        if performsStartupDiscovery {
+            Task { await refreshProject() }
+        }
     }
 
     private func handleProjectSelectionChange() {
@@ -531,6 +547,61 @@ final class AppStore {
             selectedProjectID = project.id
             saveProjects()
         }
+    }
+
+
+    func setProjectIcon(projectID: LaravelProject.ID, symbol: String, colorHex: String) {
+        guard let index = projects.firstIndex(where: { $0.id == projectID }) else { return }
+        projects[index].iconSymbol = symbol
+        projects[index].iconColorHex = colorHex
+        projects[index].customIconPath = nil
+        saveProjects()
+    }
+
+    func importProjectIcon(projectID: LaravelProject.ID) {
+        let panel = NSOpenPanel()
+        panel.title = "Choose a project icon"
+        panel.message = "Select an SVG, PNG, JPEG, PDF, TIFF, or ICNS image."
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.svg, .png, .jpeg, .pdf, .tiff, UTType(filenameExtension: "icns")].compactMap { $0 }
+        guard panel.runModal() == .OK, let sourceURL = panel.url else { return }
+
+        do {
+            let directory = projectsURL.deletingLastPathComponent().appendingPathComponent("ProjectIcons", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let ext = sourceURL.pathExtension.isEmpty ? "png" : sourceURL.pathExtension.lowercased()
+            let destination = directory.appendingPathComponent("\(projectID.uuidString).\(ext)")
+
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+            try FileManager.default.copyItem(at: sourceURL, to: destination)
+
+            guard NSImage(contentsOf: destination) != nil else {
+                try? FileManager.default.removeItem(at: destination)
+                showAlert(title: "Unsupported icon", message: "The selected image could not be read by macOS.")
+                return
+            }
+
+            guard let index = projects.firstIndex(where: { $0.id == projectID }) else { return }
+            projects[index].customIconPath = destination.path
+            saveProjects()
+        } catch {
+            showAlert(title: "Could not import icon", message: error.localizedDescription)
+        }
+    }
+
+    func resetProjectIcon(projectID: LaravelProject.ID) {
+        guard let index = projects.firstIndex(where: { $0.id == projectID }) else { return }
+        if let path = projects[index].customIconPath {
+            try? FileManager.default.removeItem(atPath: path)
+        }
+        projects[index].iconSymbol = nil
+        projects[index].iconColorHex = nil
+        projects[index].customIconPath = nil
+        saveProjects()
     }
 
     func removeSelectedProject() {
@@ -2106,12 +2177,38 @@ final class AppStore {
     }
 
     func openInTerminal() {
-        guard let project = selectedProject else { return }
-        let script = "tell application \"\(terminal)\" to do script \"cd " + project.path.replacingOccurrences(of: "\"", with: "\\\"") + "\""
-        let appleScript = NSAppleScript(source: script)
-        var error: NSDictionary?
-        appleScript?.executeAndReturnError(&error)
-        if let error { showAlert(title: "Unable to open terminal", message: error.description) }
+        guard let project = selectedProject else {
+            showAlert(title: "No project selected", message: "Choose a project before opening a terminal.")
+            return
+        }
+
+        // Use macOS's `open` command instead of AppleScript. This opens the
+        // selected terminal at the project directory without requiring the
+        // Automation permission that previously caused error -1743.
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        task.arguments = ["-a", terminal, project.path]
+        let errorPipe = Pipe()
+        task.standardError = errorPipe
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+            guard task.terminationStatus == 0 else {
+                let data = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                let message = String(data: data, encoding: .utf8)?.trimmed
+                showAlert(
+                    title: "Unable to open terminal",
+                    message: message?.isEmpty == false
+                        ? message!
+                        : "macOS could not open \(terminal). Choose another terminal in Settings."
+                )
+                return
+            }
+            statusMessage = "Opened \(project.name) in \(terminal)"
+        } catch {
+            showAlert(title: "Unable to open terminal", message: error.localizedDescription)
+        }
     }
 
     func choosePHPExecutable() {
@@ -2264,7 +2361,7 @@ final class AppStore {
     }
 
     private func shellQuote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
-    private var projectsURL: URL { FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("ABSDEVStudio/projects.json") }
+    private var projectsURL: URL { projectsStorageURL }
     private func loadProjects() { guard let data = try? Data(contentsOf: projectsURL), let decoded = try? JSONDecoder().decode([LaravelProject].self, from: data) else { return }; projects = decoded }
     private func saveProjects() { do { try FileManager.default.createDirectory(at: projectsURL.deletingLastPathComponent(), withIntermediateDirectories: true); try JSONEncoder().encode(projects).write(to: projectsURL, options: .atomic) } catch { statusMessage = "Could not save projects" } }
 }

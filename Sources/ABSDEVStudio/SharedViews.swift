@@ -281,7 +281,7 @@ struct InteractiveTerminalView: NSViewRepresentable {
     let arguments: [String]
     let environment: [String]
     let currentDirectory: String
-    let onTermination: (Int32?) -> Void
+    let onTermination: @MainActor @Sendable (Int32?) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(sessionID: sessionID, onTermination: onTermination)
@@ -330,10 +330,10 @@ struct InteractiveTerminalView: NSViewRepresentable {
 
     final class Coordinator: NSObject, LocalProcessTerminalViewDelegate {
         let sessionID: UUID
-        let onTermination: (Int32?) -> Void
+        let onTermination: @MainActor @Sendable (Int32?) -> Void
         weak var terminal: LocalProcessTerminalView?
 
-        init(sessionID: UUID, onTermination: @escaping (Int32?) -> Void) {
+        init(sessionID: UUID, onTermination: @escaping @MainActor @Sendable (Int32?) -> Void) {
             self.sessionID = sessionID
             self.onTermination = onTermination
         }
@@ -343,7 +343,7 @@ struct InteractiveTerminalView: NSViewRepresentable {
         func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
 
         func processTerminated(source: TerminalView, exitCode: Int32?) {
-            DispatchQueue.main.async { [onTermination] in
+            Task { @MainActor [onTermination] in
                 onTermination(exitCode)
             }
         }

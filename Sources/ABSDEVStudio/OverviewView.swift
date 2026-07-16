@@ -59,13 +59,25 @@ struct OverviewView: View {
                     }
 
                     GroupBox("Quick actions") {
-                        VStack(alignment: .leading, spacing: 9) {
-                            Button("Run test suite", systemImage: "checkmark.seal") { store.runArtisan("test") }
-                            Button("Clear Laravel caches", systemImage: "arrow.clockwise") { store.runArtisan("optimize:clear") }
-                            Button("Run migrations", systemImage: "cylinder.split.1x2") { store.runArtisan("migrate") }
-                            Button("Open Tinker", systemImage: "terminal") { store.openInTerminal() }
+                        VStack(alignment: .leading, spacing: 8) {
+                            QuickActionButton(title: "Run test suite", symbol: "checkmark.seal") {
+                                store.selectedSection = .artisan
+                                store.runArtisan("test")
+                            }
+                            QuickActionButton(title: "Clear Laravel caches", symbol: "arrow.clockwise") {
+                                store.selectedSection = .artisan
+                                store.runArtisan("optimize:clear")
+                            }
+                            QuickActionButton(title: "Run migrations", symbol: "cylinder.split.1x2") {
+                                store.selectedSection = .artisan
+                                store.runArtisan("migrate")
+                            }
+                            QuickActionButton(title: "Open Tinker", symbol: "terminal") {
+                                store.selectedSection = .tinker
+                                store.runTinker()
+                            }
                         }
-                        .buttonStyle(.plain)
+                        .disabled(store.selectedProject == nil || store.isBusy)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
@@ -85,6 +97,24 @@ struct OverviewView: View {
                 try? await Task.sleep(for: .seconds(2))
             }
         }
+    }
+}
+
+
+private struct QuickActionButton: View {
+    let title: String
+    let symbol: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol)
+                .font(.body.weight(.medium))
+                .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
     }
 }
 

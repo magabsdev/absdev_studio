@@ -1,0 +1,26 @@
+{
+  "": {
+    "swift-dependencies": "/Users/mag/Developer/ABSDEV/OSX/ABSDEVStudio/.build/arm64-apple-macosx/debug/ABSDEVStudioTests.build/primary.swiftdeps"
+  },
+  "/Users/mag/Developer/ABSDEV/OSX/ABSDEVStudio/Tests/ABSDEVStudioTests/AppStorePersistenceTests.swift": {
+    "dependencies": "/Users/mag/Developer/ABSDEV/OSX/ABSDEVStudio/.build/arm64-apple-macosx/debug/ABSDEVStudioTests.build/AppStorePersistenceTests.d",
+    "object": "/Users/mag/Developer/ABSDEV/OSX/ABSDEVStudio/.build/arm64-apple-macosx/debug/ABSDEVStudioTests.build/AppStorePersistenceTests.swift.o",
+    "swiftmodule": "/Users/mag/Developer/ABSDEV/OSX/ABSDEVStudio/.build/arm64-apple-macosx/debug/ABSDEVStudioTests.build/AppStorePersistenceTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/mag/Developer/ABSDEV/OSX/ABSDEVStudio/.build/arm64-apple-macosx/debug/ABSDEVStudioTests.build/AppStorePersistenceTests.swiftdeps",
+    "diagnostics": "/Users/mag/Developer/ABSDEV/OSX/ABSDEVStudio/.build/arm64-apple-macosx/debug/ABSDEVStudioTests.build/AppStorePersistenceTests.dia"
+  },
+  "/Users/mag/Developer/ABSDEV/OSX/ABSDEVStudio/Tests/ABSDEVStudioTests/CommandExecutionTests.swift": {
+    "dependencies": "/Users/mag/Developer/ABSDEV/OSX/ABSDEVStudio/.build/arm64-apple-macosx/debug/ABSDEVStudioTests.build/CommandExecutionTests.d",
+    "object": "/Users/mag/Developer/ABSDEV/OSX/ABSDEVStudio/.build/arm64-apple-macosx/debug/ABSDEVStudioTests.build/CommandExecutionTests.swift.o",
+    "swiftmodule": "/Users/mag/Developer/ABSDEV/OSX/ABSDEVStudio/.build/arm64-apple-macosx/debug/ABSDEVStudioTests.build/CommandExecutionTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/mag/Developer/ABSDEV/OSX/ABSDEVStudio/.build/arm64-apple-macosx/debug/ABSDEVStudioTests.build/CommandExecutionTests.swiftdeps",
+    "diagnostics": "/Users/mag/Developer/ABSDEV/OSX/ABSDEVStudio/.build/arm64-apple-macosx/debug/ABSDEVStudioTests.build/CommandExecutionTests.dia"
+  },
+  "/Users/mag/Developer/ABSDEV/OSX/ABSDEVStudio/Tests/ABSDEVStudioTests/ModelTests.swift": {
+    "dependencies": "/Users/mag/Developer/ABSDEV/OSX/ABSDEVStudio/.build/arm64-apple-macosx/debug/ABSDEVStudioTests.build/ModelTests.d",
+    "object": "/Users/mag/Developer/ABSDEV/OSX/ABSDEVStudio/.build/arm64-apple-macosx/debug/ABSDEVStudioTests.build/ModelTests.swift.o",
+    "swiftmodule": "/Users/mag/Developer/ABSDEV/OSX/ABSDEVStudio/.build/arm64-apple-macosx/debug/ABSDEVStudioTests.build/ModelTests~partial.swiftmodule",
+    "swift-dependencies": "/Users/mag/Developer/ABSDEV/OSX/ABSDEVStudio/.build/arm64-apple-macosx/debug/ABSDEVStudioTests.build/ModelTests.swiftdeps",
+    "diagnostics": "/Users/mag/Developer/ABSDEV/OSX/ABSDEVStudio/.build/arm64-apple-macosx/debug/ABSDEVStudioTests.build/ModelTests.dia"
+  }
+}

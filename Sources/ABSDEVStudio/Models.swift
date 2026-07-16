@@ -10,6 +10,9 @@ struct LaravelProject: Identifiable, Hashable, Codable {
     var branch: String
     var appURL: String
     var environment: String
+    var iconSymbol: String? = nil
+    var iconColorHex: String? = nil
+    var customIconPath: String? = nil
 
     static let sample = LaravelProject(
         name: "PoolMate",
