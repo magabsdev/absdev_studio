@@ -555,7 +555,7 @@ struct KBManifest: Codable {
     a.relativePath = "\(projectID.uuidString)/\(d.id.uuidString)/\(stored)"
     a.size = Int64((try? target.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
     a.data = try Data(contentsOf: target)
-    a.checksum = try SHA256.hash(data: a.data ?? Data()).map { String(format: "%02x", $0) }
+    a.checksum = SHA256.hash(data: a.data ?? Data()).map { String(format: "%02x", $0) }
       .joined()
     a.createdAt = Date()
     a.document = d
@@ -844,9 +844,6 @@ private struct KBWorkspace: View {
       }
       .keyboardShortcut("p", modifiers: [.command, .shift])
 
-      Button { inspectorVisible.toggle() } label: {
-        Label("Inspector", systemImage: "sidebar.right")
-      }
 
       Spacer(minLength: 12)
 
@@ -1158,6 +1155,19 @@ private struct KBWorkspace: View {
             .help(
               store.canDeleteSelected
                 ? "Delete this saved document" : "Save the document before deleting it")
+
+
+            Button {
+              inspectorVisible.toggle()
+            } label: {
+              Label(
+                inspectorVisible ? "Hide Inspector" : "Show Inspector",
+                systemImage: "sidebar.right"
+              )
+            }
+            .buttonStyle(.borderedProminent)
+            .fixedSize(horizontal: true, vertical: false)
+            .help(inspectorVisible ? "Hide Inspector" : "Show Inspector")
           }
 
           TextField(
@@ -1469,9 +1479,17 @@ private struct KBInlineDocumentEditor: NSViewRepresentable {
       context.coordinator.insert(insertion.attachments)
       DispatchQueue.main.async { self.insertion = nil }
     }
-    if let formatCommand {
-      context.coordinator.apply(formatCommand)
-      DispatchQueue.main.async { self.formatCommand = nil }
+    if let formatCommand, !context.coordinator.isFormatCommandQueued {
+      context.coordinator.isFormatCommandQueued = true
+      let coordinator = context.coordinator
+
+      // NSTextView formatting can invalidate AppKit layout. Running it synchronously
+      // inside updateNSView causes a recursive constraints-update cycle on macOS.
+      DispatchQueue.main.async {
+        coordinator.apply(formatCommand)
+        coordinator.isFormatCommandQueued = false
+        self.formatCommand = nil
+      }
     }
     editor.isEditable = true
   }
@@ -1482,6 +1500,8 @@ private struct KBInlineDocumentEditor: NSViewRepresentable {
     weak var editor: NSTextView?
     var isEditing = false
     var lastInsertionID: UUID?
+    var isFormatCommandQueued = false
+    private var archiveSaveGeneration = UUID()
 
     init(_ parent: KBInlineDocumentEditor) { self.parent = parent }
 
@@ -1499,7 +1519,10 @@ private struct KBInlineDocumentEditor: NSViewRepresentable {
     func loadInitialContent(fallback: String) {
       guard let editor else { return }
       if let data = parent.richTextData,
-        let archived = try? NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(data) as? NSAttributedString,
+        let archived = try? NSKeyedUnarchiver.unarchivedObject(
+          ofClass: NSAttributedString.self,
+          from: data
+        ),
         !archived.string.contains("[[attachment:")
       {
         isRendering = true
@@ -1543,14 +1566,26 @@ private struct KBInlineDocumentEditor: NSViewRepresentable {
 
     private func saveArchive() {
       guard let storage = editor?.textStorage else { return }
-      do {
-        let data = try NSKeyedArchiver.archivedData(
-          withRootObject: NSAttributedString(attributedString: storage),
-          requiringSecureCoding: false
-        )
-        parent.richTextData = data
-      } catch {
-        // Plain text remains safely stored in Core Data even if rich-text persistence fails.
+
+      let snapshot = NSAttributedString(attributedString: storage)
+      guard let data = try? NSKeyedArchiver.archivedData(
+        withRootObject: snapshot,
+        requiringSecureCoding: false
+      ) else {
+        // Plain text remains safely stored if rich-text archiving fails.
+        return
+      }
+
+      // Avoid publishing the same archive repeatedly. Reassigning identical data causes
+      // SwiftUI to update this representable again and can create an AppKit layout loop.
+      guard data != parent.richTextData else { return }
+
+      let generation = UUID()
+      archiveSaveGeneration = generation
+      DispatchQueue.main.async { [weak self] in
+        guard let self, self.archiveSaveGeneration == generation else { return }
+        guard self.parent.richTextData != data else { return }
+        self.parent.richTextData = data
       }
     }
 
@@ -2100,3 +2135,4 @@ private struct KBCommandPalette: View {
     }.frame(width: 560, height: 440)
   }
 }
+
