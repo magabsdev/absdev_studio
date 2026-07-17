@@ -63,6 +63,8 @@ final class AppStore {
     var sailCommands: [SailCommand] = []
     var isSailInstalled = false
     var isSailRunning = false
+    var isDockerRunning = false
+    var isAppleContainerRunning = false
     var sailVersion = "Not installed"
     var sailDiscoveryMessage = "Laravel Sail is not installed in this project."
     var sailInput = ""
@@ -133,6 +135,7 @@ final class AppStore {
 
         if performsStartupDiscovery {
             detectServBay()
+            Task { await refreshContainerRuntimeAvailability() }
         }
         loadProjects()
         if projects.isEmpty { projects = [.sample] }
@@ -212,6 +215,7 @@ final class AppStore {
             switch section {
             case .sail: isSailRunning
             case .servBay: isServBayInstalled
+            case .containers: isDockerRunning || isAppleContainerRunning
             default: true
             }
         }
@@ -262,6 +266,44 @@ final class AppStore {
         order.append(value)
         sectionNavigationOrder = order
         defaults.set(order, forKey: "sectionNavigationOrder")
+    }
+
+    // MARK: - Container runtimes
+
+    func refreshContainerRuntimeAvailability() async {
+        async let dockerRunning = containerRuntimeIsRunning(
+            candidates: [
+                "/opt/homebrew/bin/docker",
+                "/usr/local/bin/docker",
+                "/Applications/Docker.app/Contents/Resources/bin/docker"
+            ],
+            arguments: "info"
+        )
+        async let appleContainerRunning = containerRuntimeIsRunning(
+            candidates: [
+                "/opt/homebrew/bin/container",
+                "/usr/local/bin/container"
+            ],
+            arguments: "system status"
+        )
+
+        isDockerRunning = await dockerRunning
+        isAppleContainerRunning = await appleContainerRunning
+
+        if selectedSection == .containers, !isDockerRunning, !isAppleContainerRunning {
+            selectedSection = .overview
+        }
+    }
+
+    private func containerRuntimeIsRunning(candidates: [String], arguments: String) async -> Bool {
+        guard let executable = candidates.first(where: FileManager.default.isExecutableFile(atPath:)) else {
+            return false
+        }
+        let result = await captureResult(
+            "\(shellQuote(executable)) \(arguments) >/dev/null 2>&1",
+            in: FileManager.default.homeDirectoryForCurrentUser.path
+        )
+        return result.succeeded
     }
 
     // MARK: - ServBay
@@ -674,6 +716,7 @@ final class AppStore {
         statusMessage = "Inspecting \(project.name)…"
         defer { isBusy = false }
 
+        async let runtimeRefresh: Void = refreshContainerRuntimeAvailability()
         let phpExecutable = await resolvePHPExecutable(in: project.path)
         async let branch = capture("git branch --show-current", in: project.path)
 
@@ -686,6 +729,7 @@ final class AppStore {
             if laravelResult.succeeded { laravelVersion = laravelResult.output.replacingOccurrences(of: "Laravel Framework ", with: "").trimmed.nonEmpty ?? "Unavailable" }
         }
         let branchName = await branch
+        await runtimeRefresh
 
         // The user may have selected another project while the commands were
         // running. Never apply stale inspection results to the new selection.
