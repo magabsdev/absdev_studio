@@ -1048,13 +1048,14 @@ final class AppStore {
 
 
     func runDatabaseConsole() {
-        runInteractiveArtisan("db")
+        runInteractiveArtisan("db", returnSectionOnExit: .overview)
         statusMessage = "Interactive database console running"
     }
 
     func runTerminalWorkspace() {
         guard let project = selectedProject else { return }
         stopInteractiveArtisanSession()
+        interactiveArtisanReturnSectionOnExit = .overview
         var environment = commandEnvironment()
         environment["TERM"] = environment["TERM"] ?? "xterm-256color"
         environment["COLORTERM"] = environment["COLORTERM"] ?? "truecolor"

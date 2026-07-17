@@ -448,11 +448,10 @@ import SwiftUI
 
 private struct FullTerminalWorkspace: View {
     @Environment(AppStore.self) private var store
+    let section: AppSection
     let title: String
     let subtitle: String
-    let idleTitle: String
-    let idleDescription: String
-    let startTitle: String
+    let startingTitle: String
     let startSymbol: String
     let start: () -> Void
 
@@ -462,15 +461,13 @@ private struct FullTerminalWorkspace: View {
                 PageHeader(title: title, subtitle: subtitle)
                 Spacer()
                 if store.isInteractiveArtisanTerminalVisible {
-                    Button(store.isInteractiveArtisanSession ? "Stop" : "Close", systemImage: store.isInteractiveArtisanSession ? "stop.fill" : "xmark") {
+                    Button("Stop", systemImage: "stop.fill") {
                         store.stopInteractiveArtisanSession()
+                        store.selectedSection = .overview
                     }
                     .buttonStyle(.bordered)
                     .tint(.red)
                 }
-                Button(startTitle, systemImage: startSymbol, action: start)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(store.selectedProject == nil || store.isInteractiveArtisanSession)
             }
             .padding(.horizontal, 28)
             .padding(.vertical, 20)
@@ -489,17 +486,38 @@ private struct FullTerminalWorkspace: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(18)
             } else {
-                ContentUnavailableView {
-                    Label(idleTitle, systemImage: startSymbol)
-                } description: {
-                    Text(idleDescription)
-                } actions: {
-                    Button(startTitle, action: start).buttonStyle(.borderedProminent)
+                VStack(spacing: 14) {
+                    ProgressView()
+                        .controlSize(.large)
+                    Label(
+                        store.selectedProject == nil ? "Select a project to continue" : startingTitle,
+                        systemImage: startSymbol
+                    )
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(minWidth: 900, maxWidth: .infinity, minHeight: 700, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear {
+            guard store.selectedProject != nil,
+                  !store.isInteractiveArtisanTerminalVisible,
+                  !store.isInteractiveArtisanSession else { return }
+
+            // Allow SwiftUI to mount the terminal host before launching the PTY.
+            DispatchQueue.main.async {
+                guard store.selectedSection == section,
+                      !store.isInteractiveArtisanTerminalVisible,
+                      !store.isInteractiveArtisanSession else { return }
+                start()
+            }
+        }
+        .onDisappear {
+            if store.isInteractiveArtisanSession {
+                store.stopInteractiveArtisanSession()
+            }
+        }
     }
 }
 
@@ -507,11 +525,10 @@ struct DatabaseConsoleView: View {
     @Environment(AppStore.self) private var store
     var body: some View {
         FullTerminalWorkspace(
+            section: .databaseConsole,
             title: "Database Console",
             subtitle: "A dedicated interactive Laravel database CLI for the selected project.",
-            idleTitle: "Database console is ready",
-            idleDescription: "Start php artisan db in a real terminal. Database-specific prompts, history, completion and raw keyboard input are supported.",
-            startTitle: "Start Database Console",
+            startingTitle: "Starting Database Console…",
             startSymbol: "cylinder.split.1x2.fill",
             start: { store.runDatabaseConsole() }
         )
@@ -522,11 +539,10 @@ struct TerminalWorkspaceView: View {
     @Environment(AppStore.self) private var store
     var body: some View {
         FullTerminalWorkspace(
+            section: .terminal,
             title: "Terminal",
             subtitle: "A full interactive shell rooted at the selected Laravel project.",
-            idleTitle: "Project terminal is ready",
-            idleDescription: "Run Composer, Git, Node, PHP, Sail, Docker and operating-system commands directly inside ABSDEV Studio.",
-            startTitle: "Start Terminal",
+            startingTitle: "Starting Terminal…",
             startSymbol: "terminal.fill",
             start: { store.runTerminalWorkspace() }
         )
