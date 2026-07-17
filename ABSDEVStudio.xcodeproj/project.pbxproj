@@ -25,6 +25,9 @@
 		D07D33E6EB9F55B36B8D3605 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7E7393E9EFBFE23C0522857 /* RootView.swift */; };
 		EF8431AC2777E551414F7BB6 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F557E7613C522594926CEB0D /* SettingsView.swift */; };
 		A1B2C3D4E5F60718293A4B5C /* LaravelControlCentreViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C2D3E4F5061728394A5B6C /* LaravelControlCentreViews.swift */; };
+		D1E2F3A4B5C60718293A4B5C /* OpenWebUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1F2A3B4C5D60718293A4B5C /* OpenWebUI.swift */; };
+		C0FFEE000000000000000001 /* LMStudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE000000000000000002 /* LMStudio.swift */; };
+		A7B8C9D0E1F2031425364758 /* MCP.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8C9D0E1F203142536475869 /* MCP.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -48,6 +51,9 @@
 		E8CE4721331CF75E9478C7F2 /* ABSDEVStudio.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ABSDEVStudio.entitlements; sourceTree = "<group>"; };
 		F557E7613C522594926CEB0D /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		B1C2D3E4F5061728394A5B6C /* LaravelControlCentreViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaravelControlCentreViews.swift; sourceTree = "<group>"; };
+		E1F2A3B4C5D60718293A4B5C /* OpenWebUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWebUI.swift; sourceTree = "<group>"; };
+		C0FFEE000000000000000002 /* LMStudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LMStudio.swift; sourceTree = "<group>"; };
+		B8C9D0E1F203142536475869 /* MCP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCP.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -96,6 +102,9 @@
 				8A0C02CAA52394519140A4FA /* OverviewView.swift */,
 				A7E7393E9EFBFE23C0522857 /* RootView.swift */,
 				F557E7613C522594926CEB0D /* SettingsView.swift */,
+				E1F2A3B4C5D60718293A4B5C /* OpenWebUI.swift */,
+				C0FFEE000000000000000002 /* LMStudio.swift */,
+				B8C9D0E1F203142536475869 /* MCP.swift */,
 				867D8A179010B63034C1EDCF /* SharedViews.swift */,
 			);
 			name = Sources;
@@ -203,6 +212,9 @@
 				ADF0DAAB2D97FFE01582AB87 /* OverviewView.swift in Sources */,
 				D07D33E6EB9F55B36B8D3605 /* RootView.swift in Sources */,
 				EF8431AC2777E551414F7BB6 /* SettingsView.swift in Sources */,
+				D1E2F3A4B5C60718293A4B5C /* OpenWebUI.swift in Sources */,
+				C0FFEE000000000000000001 /* LMStudio.swift in Sources */,
+				A7B8C9D0E1F2031425364758 /* MCP.swift in Sources */,
 				54868FD03BCB032E4C153D5F /* SharedViews.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -8,6 +8,8 @@ import SwiftUI
 @MainActor
 @Observable
 final class AppStore {
+    var openWebUI = OpenWebUIController()
+    var lmStudio = LMStudioController()
     var projects: [LaravelProject] = []
     var selectedProjectID: LaravelProject.ID? {
         didSet {
