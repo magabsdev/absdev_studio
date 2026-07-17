@@ -221,7 +221,14 @@ final class AppStore {
             case .observability: projectContainsAnyPackage(["laravel/pulse", "laravel/telescope", "laravel/horizon", "laravel/octane", "barryvdh/laravel-debugbar"])
             case .featureFlags: projectContainsAnyPackage(["laravel/pennant"])
             case .aiInspector: projectContainsAnyPackage(["laravel/ai"])
-            case .frontend: selectedProject.map { FileManager.default.fileExists(atPath: URL(fileURLWithPath: $0.path).appendingPathComponent("package.json").path) } ?? false
+            case .frontend: projectPathExists("package.json")
+            case .events: projectHasArtisanCommand("event:list") || projectDirectoryContainsFiles("app/Events") || projectDirectoryContainsFiles("app/Listeners")
+            case .models: projectHasArtisanCommand("model:show") || projectDirectoryContainsFiles("app/Models")
+            case .testing: projectPathExists("phpunit.xml") || projectPathExists("phpunit.xml.dist") || projectContainsAnyPackage(["pestphp/pest", "phpunit/phpunit", "laravel/dusk"])
+            case .apiCentre: projectPathExists("routes/api.php") || projectContainsAnyPackage(["laravel/sanctum", "laravel/passport"])
+            case .mailPreview: projectDirectoryContainsFiles("app/Mail") || projectDirectoryContainsFiles("app/Notifications")
+            case .storage: projectPathExists("config/filesystems.php")
+            case .services: projectPathExists("config/cache.php") || projectPathExists("config/queue.php") || projectPathExists("config/services.php")
             default: true
             }
         }
@@ -236,12 +243,40 @@ final class AppStore {
         }
     }
 
-    private func projectContainsAnyPackage(_ packageNames: [String]) -> Bool {
+    func projectContainsAnyPackage(_ packageNames: [String]) -> Bool {
         guard let project = selectedProject else { return false }
         let root = URL(fileURLWithPath: project.path)
         let candidates = ["composer.lock", "composer.json"]
         let contents = candidates.compactMap { try? String(contentsOf: root.appendingPathComponent($0), encoding: .utf8) }.joined(separator: "\n")
         return packageNames.contains { contents.localizedCaseInsensitiveContains("\"\($0)\"") }
+    }
+
+    func projectContainsPackage(_ packageName: String) -> Bool {
+        projectContainsAnyPackage([packageName])
+    }
+
+    func projectHasArtisanCommand(_ commandName: String) -> Bool {
+        artisanCommands.contains { $0.name == commandName || $0.aliases.contains(commandName) }
+    }
+
+    func projectPathExists(_ relativePath: String) -> Bool {
+        guard let project = selectedProject else { return false }
+        return FileManager.default.fileExists(
+            atPath: URL(fileURLWithPath: project.path).appendingPathComponent(relativePath).path
+        )
+    }
+
+    func projectDirectoryContainsFiles(_ relativePath: String) -> Bool {
+        guard let project = selectedProject else { return false }
+        let url = URL(fileURLWithPath: project.path).appendingPathComponent(relativePath)
+        guard let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: nil) else { return false }
+        while let item = enumerator.nextObject() as? URL {
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: item.path, isDirectory: &isDirectory), !isDirectory.boolValue {
+                return true
+            }
+        }
+        return false
     }
 
     func moveProject(_ projectID: LaravelProject.ID, before targetID: LaravelProject.ID) {

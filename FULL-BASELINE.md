@@ -32,3 +32,7 @@ Destructive actions use native confirmation before execution. Commands are route
 ## Conditional navigation
 
 Package-specific sections are hidden unless their Composer package is present. Frontend Control is hidden unless `package.json` exists. Containers remains visible only while Docker or Apple Containers is running.
+
+## Installed-control filtering and command output
+
+Control-centre cards are filtered against the selected project's discovered Artisan command list, Composer packages, files, and source directories. Package-specific cards are not displayed when their package is absent. Running a command now opens the Development console first so streamed and final output remains visible after the progress sheet closes.

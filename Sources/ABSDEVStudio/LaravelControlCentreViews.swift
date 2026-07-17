@@ -68,6 +68,7 @@ private struct ControlAction: Identifiable {
     let badge: String
     let command: ControlCommand
     var destructive = false
+    var available = true
 }
 
 struct LaravelControlCentreView: View {
@@ -92,12 +93,22 @@ struct LaravelControlCentreView: View {
             Divider()
 
             ScrollView {
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
-                    ForEach(actions) { action in
-                        controlCard(action)
+                if actions.isEmpty {
+                    ContentUnavailableView(
+                        "No installed controls",
+                        systemImage: "shippingbox",
+                        description: Text("ABSDEV Studio did not detect an installed package, command, or project file for this control centre.")
+                    )
+                    .frame(maxWidth: .infinity, minHeight: 360)
+                    .padding(28)
+                } else {
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: 20) {
+                        ForEach(actions) { action in
+                            controlCard(action)
+                        }
                     }
+                    .padding(28)
                 }
-                .padding(28)
             }
         }
     }
@@ -144,8 +155,11 @@ struct LaravelControlCentreView: View {
         if action.destructive, !confirm(action) { return }
         switch action.command {
         case .artisan(let command):
+            store.selectedSection = .development
             store.runArtisan(command)
         case .shell(let command):
+            store.selectedSection = .development
+            store.clearConsole()
             store.runCommand(command)
         case .navigate(let section):
             store.selectedSection = section
@@ -162,7 +176,9 @@ struct LaravelControlCentreView: View {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
-    private var actions: [ControlAction] {
+    private var actions: [ControlAction] { allActions.filter(\.available) }
+
+    private var allActions: [ControlAction] {
         switch kind {
         case .applicationStatus:
             return [
@@ -200,26 +216,26 @@ struct LaravelControlCentreView: View {
             ]
         case .models:
             return [
-                a("List Models", "Discover Eloquent model source files.", "cube.transparent", "Source", .shell("find app -type f -path '*/Models/*.php' | sort")),
+                a("List Models", "Discover Eloquent model source files.", "cube.transparent", "Source", .shell("find app -type f -path '*/Models/*.php' | sort"), available: store.projectDirectoryContainsFiles("app/Models")),
                 a("Inspect Model", "Choose a model and run Laravel model:show.", "doc.text.magnifyingglass", "Inspect", .artisan("model:show")),
-                a("Factories", "Find model factories in the project.", "building.2.crop.circle", "Source", .shell("find database/factories -type f 2>/dev/null | sort")),
+                a("Factories", "Find model factories in the project.", "building.2.crop.circle", "Source", .shell("find database/factories -type f | sort"), available: store.projectDirectoryContainsFiles("database/factories")),
                 a("Policies & Observers", "Discover model policies and observers.", "eye.fill", "Source", .shell("find app -type f \\( -path '*/Policies/*' -o -path '*/Observers/*' \\) | sort")),
                 a("Open Tinker", "Start an interactive model inspection session.", "chevron.left.forwardslash.chevron.right", "Interactive", .navigate(.tinker))
             ]
         case .services:
             return [
                 a("Configuration Overview", "Inspect cache, queue, session, mail and filesystem drivers.", "switch.2", "Inspect", .artisan("about")),
-                a("Redis", "Test the configured Redis connection through Laravel.", "memorychip.fill", "Test", .artisan("tinker --execute=\"try { echo Illuminate\\Support\\Facades\\Redis::ping(); } catch (Throwable $e) { echo $e->getMessage(); }\"")),
+                a("Redis", "Test the configured Redis connection through Laravel.", "memorychip.fill", "Test", .artisan("tinker --execute=\"try { echo Illuminate\\Support\\Facades\\Redis::ping(); } catch (Throwable $e) { echo $e->getMessage(); }\""), available: store.projectContainsAnyPackage(["predis/predis", "ext-redis"])),
                 a("Filesystem Disks", "List configured filesystem disk names.", "externaldrive.fill", "Inspect", .shell("php -r '$c=require \"config/filesystems.php\"; echo implode(PHP_EOL,array_keys($c[\"disks\"]??[]));'")),
                 a("Composer Packages", "Open installed framework integrations.", "shippingbox.fill", "Open", .navigate(.intelligence))
             ]
         case .testing:
             return [
                 a("All Tests", "Run the complete Laravel test suite.", "checkmark.seal.fill", "Test", .artisan("test")),
-                a("Parallel Tests", "Run tests concurrently when supported.", "rectangle.3.group.fill", "Test", .artisan("test --parallel")),
-                a("Coverage", "Run tests and generate coverage output.", "chart.bar.fill", "Coverage", .artisan("test --coverage")),
+                a("Parallel Tests", "Run tests concurrently when supported.", "rectangle.3.group.fill", "Test", .artisan("test --parallel"), available: store.projectContainsPackage("brianium/paratest") || store.projectContainsPackage("pestphp/pest-plugin-parallel")),
+                a("Coverage", "Run tests and generate coverage output.", "chart.bar.fill", "Coverage", .artisan("test --coverage"), available: store.projectContainsAnyPackage(["phpunit/php-code-coverage", "pestphp/pest-plugin-coverage"])),
                 a("Stop on Failure", "Run until the first failing test.", "stop.circle.fill", "Test", .artisan("test --stop-on-failure")),
-                a("Dusk", "Run browser tests when Laravel Dusk is installed.", "moon.stars.fill", "Browser", .artisan("dusk"))
+                a("Dusk", "Run browser tests when Laravel Dusk is installed.", "moon.stars.fill", "Browser", .artisan("dusk"), available: store.projectContainsPackage("laravel/dusk"))
             ]
         case .frontend:
             return [
@@ -232,17 +248,18 @@ struct LaravelControlCentreView: View {
         case .realtime:
             return [
                 a("Broadcasting Configuration", "Review the configured broadcasting connection.", "antenna.radiowaves.left.and.right", "Inspect", .shell("grep -E '^(BROADCAST_CONNECTION|REVERB_)' .env 2>/dev/null | sed 's/=.*/=<masked>/'")),
-                a("Start Reverb", "Start Laravel's WebSocket server.", "wave.3.right.circle.fill", "Reverb", .artisan("reverb:start")),
-                a("Restart Reverb", "Gracefully restart active Reverb servers.", "arrow.clockwise.circle.fill", "Reverb", .artisan("reverb:restart")),
-                a("List Channels", "Inspect application broadcasting channel definitions.", "dot.radiowaves.left.and.right", "Source", .shell("test -f routes/channels.php && sed -n '1,240p' routes/channels.php || true"))
+                a("Start Reverb", "Start Laravel's WebSocket server.", "wave.3.right.circle.fill", "Reverb", .artisan("reverb:start"), available: store.projectHasArtisanCommand("reverb:start")),
+                a("Restart Reverb", "Gracefully restart active Reverb servers.", "arrow.clockwise.circle.fill", "Reverb", .artisan("reverb:restart"), available: store.projectHasArtisanCommand("reverb:restart")),
+                a("List Channels", "Inspect application broadcasting channel definitions.", "dot.radiowaves.left.and.right", "Source", .shell("sed -n '1,240p' routes/channels.php"), available: store.projectPathExists("routes/channels.php"))
             ]
         case .observability:
             return [
-                a("Pulse Check", "Inspect Pulse installation and command availability.", "waveform.path.ecg", "Pulse", .artisan("about")),
-                a("Telescope Prune", "Remove expired Telescope entries.", "scope", "Telescope", .artisan("telescope:prune")),
-                a("Horizon Status", "Show the current Horizon supervisor state.", "chart.xyaxis.line", "Horizon", .artisan("horizon:status")),
-                a("Restart Horizon", "Gracefully terminate Horizon so the process monitor restarts it.", "arrow.clockwise", "Horizon", .artisan("horizon:terminate")),
-                a("Reload Octane", "Reload Octane workers without a full stop.", "hare.fill", "Octane", .artisan("octane:reload")),
+                a("Pulse Check", "Inspect Pulse installation and command availability.", "waveform.path.ecg", "Pulse", .artisan("about"), available: store.projectContainsPackage("laravel/pulse")),
+                a("Telescope Prune", "Remove expired Telescope entries.", "scope", "Telescope", .artisan("telescope:prune"), available: store.projectContainsPackage("laravel/telescope")),
+                a("Horizon Status", "Show the current Horizon supervisor state.", "chart.xyaxis.line", "Horizon", .artisan("horizon:status"), available: store.projectContainsPackage("laravel/horizon")),
+                a("Restart Horizon", "Gracefully terminate Horizon so the process monitor restarts it.", "arrow.clockwise", "Horizon", .artisan("horizon:terminate"), available: store.projectContainsPackage("laravel/horizon")),
+                a("Reload Octane", "Reload Octane workers without a full stop.", "hare.fill", "Octane", .artisan("octane:reload"), available: store.projectContainsPackage("laravel/octane")),
+                a("Debugbar Status", "Show the installed Laravel Debugbar package and version.", "ladybug.fill", "Debugbar", .shell("composer show barryvdh/laravel-debugbar"), available: store.projectContainsPackage("barryvdh/laravel-debugbar")),
                 a("Logs", "Open structured application logs and live tailing.", "doc.text.magnifyingglass", "Open", .navigate(.logs))
             ]
         case .featureFlags:
@@ -256,7 +273,7 @@ struct LaravelControlCentreView: View {
                 a("Composer Validate", "Validate composer.json and its lock file.", "checkmark.shield.fill", "Validate", .shell("composer validate --no-check-publish")),
                 a("Production Audit", "Run tests, inspect migrations and verify the working tree.", "checklist", "Preflight", .shell("php artisan test && php artisan migrate:status && git status --short --branch")),
                 a("Optimise", "Build production framework caches.", "bolt.fill", "Prepare", .artisan("optimize")),
-                a("Frontend Build", "Compile production frontend assets.", "hammer.fill", "Build", .shell("npm run build")),
+                a("Frontend Build", "Compile production frontend assets.", "hammer.fill", "Build", .shell("npm run build"), available: store.projectPathExists("package.json")),
                 a("Security Audit", "Check Composer dependencies for advisories.", "lock.shield.fill", "Audit", .shell("composer audit")),
                 a("Maintenance Mode", "Open controlled deployment maintenance settings.", "wrench.and.screwdriver.fill", "Open", .navigate(.maintenance))
             ]
@@ -273,8 +290,8 @@ struct LaravelControlCentreView: View {
                 a("Routes", "Open the route inspector.", "arrow.triangle.branch", "Open", .navigate(.routes)),
                 a("Models", "Open the Eloquent model inspector.", "cube.transparent", "Open", .navigate(.models)),
                 a("Events", "Open event and listener controls.", "point.3.connected.trianglepath.dotted", "Open", .navigate(.events)),
-                a("Tests", "List project test files.", "checkmark.seal", "Source", .shell("find tests -type f | sort")),
-                a("Modules", "Discover modular application directories and manifests.", "square.stack.3d.up.fill", "Source", .shell("find Modules modules -maxdepth 3 -type f 2>/dev/null | sort | head -400"))
+                a("Tests", "List project test files.", "checkmark.seal", "Source", .shell("find tests -type f | sort"), available: store.projectDirectoryContainsFiles("tests")),
+                a("Modules", "Discover modular application directories and manifests.", "square.stack.3d.up.fill", "Source", .shell("find Modules modules -maxdepth 3 -type f 2>/dev/null | sort | head -400"), available: store.projectDirectoryContainsFiles("Modules") || store.projectDirectoryContainsFiles("modules"))
             ]
         case .storage:
             return [
@@ -288,15 +305,15 @@ struct LaravelControlCentreView: View {
             return [
                 a("API Routes", "List routes whose URI begins with api/.", "network", "Inspect", .artisan("route:list --path=api")),
                 a("Route Inspector", "Search all route methods, middleware and actions.", "arrow.triangle.branch", "Open", .navigate(.routes)),
-                a("Sanctum Status", "Inspect installed API authentication support.", "lock.shield.fill", "Inspect", .shell("composer show laravel/sanctum 2>/dev/null || true")),
+                a("Sanctum Status", "Inspect installed API authentication support.", "lock.shield.fill", "Inspect", .shell("composer show laravel/sanctum"), available: store.projectContainsPackage("laravel/sanctum")),
                 a("API Tests", "Run tests commonly stored under API paths.", "checkmark.seal.fill", "Test", .artisan("test --filter=Api")),
                 a("Rate Limiters", "Find named rate limit definitions.", "speedometer", "Source", .shell("rg -n 'RateLimiter::for' app routes 2>/dev/null || true"))
             ]
         case .mailPreview:
             return [
                 a("Mail Configuration", "Review mailer and sender variables with secrets masked.", "envelope.fill", "Inspect", .shell("grep -E '^MAIL_' .env 2>/dev/null | sed 's/=.*/=<masked>/'")),
-                a("Mailables", "Discover application mailable classes.", "envelope.open.fill", "Source", .shell("find app -type f -path '*/Mail/*' | sort")),
-                a("Notifications", "Discover application notification classes.", "bell.fill", "Source", .shell("find app -type f -path '*/Notifications/*' | sort")),
+                a("Mailables", "Discover application mailable classes.", "envelope.open.fill", "Source", .shell("find app -type f -path '*/Mail/*' | sort"), available: store.projectDirectoryContainsFiles("app/Mail")),
+                a("Notifications", "Discover application notification classes.", "bell.fill", "Source", .shell("find app -type f -path '*/Notifications/*' | sort"), available: store.projectDirectoryContainsFiles("app/Notifications")),
                 a("Queued Mail", "Open queue controls for queued messages and notifications.", "tray.full.fill", "Open", .navigate(.queue)),
                 a("Mail Views", "Find Blade views used by mail and notifications.", "doc.richtext.fill", "Source", .shell("find resources/views -type f \\( -path '*/mail/*' -o -path '*/emails/*' \\) | sort"))
             ]
@@ -310,7 +327,27 @@ struct LaravelControlCentreView: View {
         }
     }
 
-    private func a(_ title: String, _ detail: String, _ symbol: String, _ badge: String, _ command: ControlCommand, _ destructive: Bool = false) -> ControlAction {
-        ControlAction(title: title, detail: detail, symbol: symbol, badge: badge, command: command, destructive: destructive)
+    private func a(_ title: String, _ detail: String, _ symbol: String, _ badge: String, _ command: ControlCommand, _ destructive: Bool = false, available: Bool = true) -> ControlAction {
+        let installed: Bool
+        switch command {
+        case .artisan(let input):
+            let commandName = input.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
+            if commandName == "tinker" {
+                installed = store.projectContainsPackage("laravel/tinker")
+            } else {
+                installed = store.projectHasArtisanCommand(commandName)
+            }
+        case .shell, .navigate:
+            installed = true
+        }
+        return ControlAction(
+            title: title,
+            detail: detail,
+            symbol: symbol,
+            badge: badge,
+            command: command,
+            destructive: destructive,
+            available: available && installed
+        )
     }
 }
