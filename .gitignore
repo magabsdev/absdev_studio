@@ -1,1 +1,95 @@
-/project.xcworkspace
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Xcode user data
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+
+# Xcode build output
+build/
+DerivedData/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Xcode workspace user settings
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Keep shared SwiftPM configuration when required
+!.swiftpm/xcode/
+!.swiftpm/xcode/package.xcworkspace/
+!.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+
+# CocoaPods
+Pods/
+*.xcworkspace
+
+# Carthage
+Carthage/Build/
+Carthage/Checkouts/
+
+# CLion / JetBrains
+.idea/
+*.iml
+cmake-build-*/
+out/
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+# Clang
+.clangd/
+.cache/
+*.pch
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+*.bak
+
+# Logs
+*.log
+
+# Environment and local configuration
+.env
+.env.local
+.env.*.local
+
+# Secrets and signing
+*.p12
+*.mobileprovision
+*.cer
+*.key
+
+# Fastlane generated files
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output/
+
+# Code coverage
+*.profraw
+*.profdata
+coverage/
