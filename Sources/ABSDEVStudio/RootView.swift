@@ -65,6 +65,10 @@ struct RootView: View {
                 CommandProgressDialog(store: store)
                     .interactiveDismissDisabled()
             }
+            .sheet(isPresented: $store.isCommandPalettePresented) {
+                CommandPaletteView()
+                    .environment(store)
+            }
 
             if isLaunching {
                 LaunchExperienceView()
@@ -317,39 +321,65 @@ private struct SectionNavigationView: View {
     var body: some View {
         @Bindable var store = store
 
-        List(store.availableSections, selection: $store.selectedSection) { section in
-            Label {
-                Text(section.rawValue)
-            } icon: {
-                Image(systemName: section.symbol)
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(section.tint)
-                    .frame(width: 20)
+        let filteredSections = store.sectionSearchQuery.isEmpty
+            ? store.availableSections
+            : store.availableSections.filter { $0.rawValue.localizedCaseInsensitiveContains(store.sectionSearchQuery) }
+
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search tools", text: $store.sectionSearchQuery)
+                    .textFieldStyle(.plain)
+                if !store.sectionSearchQuery.isEmpty {
+                    Button { store.sectionSearchQuery = "" } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
-            .tag(section)
-            .draggable(section.id) {
-                Label(section.rawValue, systemImage: section.symbol)
-                    .padding(8)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-            }
-            .dropDestination(for: String.self) { items, _ in
-                guard let rawID = items.first,
-                      let dragged = AppSection.allCases.first(where: { $0.id == rawID }) else { return false }
-                store.moveSection(dragged, before: section)
-                return true
+            .padding(9)
+            .background(.background.secondary, in: RoundedRectangle(cornerRadius: 9))
+            .padding(10)
+
+            if filteredSections.isEmpty {
+                ContentUnavailableView.search(text: store.sectionSearchQuery)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(filteredSections, selection: $store.selectedSection) { section in
+                    Label {
+                        Text(section.rawValue)
+                    } icon: {
+                        Image(systemName: section.symbol)
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(section.tint)
+                            .frame(width: 20)
+                    }
+                    .tag(section)
+                    .draggable(section.id) {
+                        Label(section.rawValue, systemImage: section.symbol)
+                            .padding(8)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                    }
+                    .dropDestination(for: String.self) { items, _ in
+                        guard let rawID = items.first,
+                              let dragged = AppSection.allCases.first(where: { $0.id == rawID }) else { return false }
+                        store.moveSection(dragged, before: section)
+                        return true
+                    }
+                }
+                .listStyle(.sidebar)
             }
         }
         .navigationTitle(store.selectedProject?.name ?? "Laravel")
-        .listStyle(.sidebar)
     }
 }
 
 private struct DetailRouter: View {
     @Environment(AppStore.self) private var store
 
-    @ViewBuilder
     var body: some View {
-        switch store.selectedSection {
+        Group {
+            switch store.selectedSection {
         case .overview: OverviewView()
         case .development: DevelopmentView()
         case .environment: EnvironmentView()
@@ -387,6 +417,64 @@ private struct DetailRouter: View {
         case .apiCentre: LaravelControlCentreView(kind: .apiCentre)
         case .mailPreview: LaravelControlCentreView(kind: .mailPreview)
         case .aiInspector: LaravelControlCentreView(kind: .aiInspector)
+            }
         }
+        .id(store.selectedSection)
+        .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .trailing)), removal: .opacity))
+        .animation(.easeInOut(duration: 0.18), value: store.selectedSection)
+    }
+}
+
+private struct CommandPaletteView: View {
+    @Environment(AppStore.self) private var store
+    @FocusState private var searchFocused: Bool
+
+    var body: some View {
+        @Bindable var store = store
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: "command.square.fill")
+                    .font(.title2)
+                    .foregroundStyle(.tint)
+                TextField("Search sections, actions, or Artisan commands", text: $store.commandPaletteQuery)
+                    .textFieldStyle(.plain)
+                    .font(.title3)
+                    .focused($searchFocused)
+                Text("⌘⇧P").font(.caption.monospaced()).foregroundStyle(.secondary)
+            }
+            .padding(18)
+            Divider()
+
+            if store.filteredCommandPaletteItems.isEmpty {
+                ContentUnavailableView.search(text: store.commandPaletteQuery)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(store.filteredCommandPaletteItems) { item in
+                    Button {
+                        store.executePaletteItem(item)
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: item.symbol)
+                                .symbolRenderingMode(.hierarchical)
+                                .foregroundStyle(.tint)
+                                .frame(width: 26)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(item.title).fontWeight(.semibold)
+                                Text(item.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            Spacer()
+                            Image(systemName: "return").font(.caption).foregroundStyle(.tertiary)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.vertical, 4)
+                }
+                .listStyle(.inset)
+            }
+        }
+        .frame(minWidth: 680, idealWidth: 760, minHeight: 520, idealHeight: 620)
+        .task { searchFocused = true }
+        .onExitCommand { store.isCommandPalettePresented = false }
     }
 }

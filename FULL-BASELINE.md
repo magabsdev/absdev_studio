@@ -42,3 +42,13 @@ Control-centre cards are filtered against the selected project's discovered Arti
 The selected project is now scanned into one `ProjectCapabilitiesSnapshot` after Artisan discovery. The snapshot records installed/direct Composer packages, available Artisan commands, relevant files and populated Laravel source directories, detected project profiles, and shared health states. Sidebar visibility and control-centre cards consume this snapshot rather than repeatedly parsing Composer files or rescanning the project tree.
 
 Detected profiles include Laravel API, Livewire, Inertia, package development, Filament, modules, microservice, Sail, Docker and ServBay. Control cards display Ready, Needs attention, Problem detected or Not configured status indicators.
+
+## macOS polish baseline
+
+- Global command palette (`Command-Shift-P`) searches installed sections, project actions, and discovered Artisan commands.
+- Tool navigation includes an inline filter and a native no-results state.
+- Section changes use a short native transition.
+- Long-running foreground commands retain progress/output and post a local completion notification when ABSDEV Studio is not active.
+- Project commands include Quick Look, Reveal in Finder, Copy Project Path, browser/editor launch, and capability refresh.
+- Keyboard navigation: Command-1 Overview, Command-2 Development, Command-3 Artisan, Command-4 Terminal.
+- Unsupported tools remain absent because command-palette results are generated from `availableSections` and discovered Artisan commands.

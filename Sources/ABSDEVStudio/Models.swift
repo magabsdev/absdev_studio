@@ -1,6 +1,22 @@
 import Foundation
 import SwiftUI
 
+
+struct CommandPaletteItem: Identifiable, Hashable {
+    enum Kind: Hashable {
+        case section(AppSection)
+        case artisan(String)
+        case action(String)
+    }
+
+    let id: String
+    let title: String
+    let subtitle: String
+    let symbol: String
+    let keywords: [String]
+    let kind: Kind
+}
+
 struct LaravelProject: Identifiable, Hashable, Codable {
     var id = UUID()
     var name: String

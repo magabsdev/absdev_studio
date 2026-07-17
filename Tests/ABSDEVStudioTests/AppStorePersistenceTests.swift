@@ -128,3 +128,44 @@ final class AppStorePersistenceTests: XCTestCase {
         XCTAssertTrue(store.artisanCommands.isEmpty)
     }
 }
+
+extension AppStorePersistenceTests {
+    func testCommandPaletteOnlyContainsAvailableSections() {
+        let store = makeStore()
+        store.isSailRunning = false
+        store.isServBayInstalled = false
+
+        let sectionItems = store.commandPaletteItems.compactMap { item -> AppSection? in
+            if case .section(let section) = item.kind { return section }
+            return nil
+        }
+
+        XCTAssertFalse(sectionItems.contains(.sail))
+        XCTAssertFalse(sectionItems.contains(.servBay))
+        XCTAssertTrue(sectionItems.contains(.overview))
+    }
+
+    func testCommandPaletteSearchMatchesKeywordsAndTitles() {
+        let store = makeStore()
+        store.commandPaletteQuery = "finder files"
+
+        XCTAssertEqual(store.filteredCommandPaletteItems.first?.id, "action:finder")
+    }
+
+    func testExecutingSectionPaletteItemNavigates() {
+        let store = makeStore()
+        let item = CommandPaletteItem(
+            id: "section:Development",
+            title: "Development",
+            subtitle: "Open Development",
+            symbol: "play.rectangle.fill",
+            keywords: [],
+            kind: .section(.development)
+        )
+
+        store.executePaletteItem(item)
+
+        XCTAssertEqual(store.selectedSection, .development)
+        XCTAssertFalse(store.isCommandPalettePresented)
+    }
+}

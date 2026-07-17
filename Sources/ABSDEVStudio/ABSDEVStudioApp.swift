@@ -23,6 +23,31 @@ struct ABSDEVStudioApp: App {
                 .keyboardShortcut("o", modifiers: [.command, .shift])
             }
 
+            CommandMenu("Navigate") {
+                Button("Command Palette…") { store.presentCommandPalette() }
+                    .keyboardShortcut("p", modifiers: [.command, .shift])
+                Divider()
+                Button("Overview") { store.selectedSection = .overview }
+                    .keyboardShortcut("1", modifiers: [.command])
+                Button("Development") { store.selectedSection = .development }
+                    .keyboardShortcut("2", modifiers: [.command])
+                Button("Artisan") { store.selectedSection = .artisan }
+                    .keyboardShortcut("3", modifiers: [.command])
+                Button("Terminal") { store.selectedSection = .terminal }
+                    .keyboardShortcut("4", modifiers: [.command])
+            }
+
+            CommandMenu("Project") {
+                Button("Refresh Capabilities") { store.refreshProjectCapabilities() }
+                    .keyboardShortcut("r", modifiers: [.command, .shift])
+                Button("Quick Look Project") { store.quickLookProject() }
+                    .keyboardShortcut("y", modifiers: [.command])
+                Button("Reveal in Finder") { store.revealInFinder() }
+                    .keyboardShortcut("f", modifiers: [.command, .option])
+                Button("Copy Project Path") { store.copyProjectPath() }
+                    .keyboardShortcut("c", modifiers: [.command, .option])
+            }
+
             CommandMenu("Laravel") {
                 Button(store.isDevelopmentRunning ? "Stop Development" : "Start Development") {
                     store.toggleDevelopment()

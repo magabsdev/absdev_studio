@@ -2,6 +2,8 @@ import AppKit
 import Foundation
 import Observation
 import UniformTypeIdentifiers
+import SwiftUI
+@preconcurrency import UserNotifications
 
 @MainActor
 @Observable
@@ -14,6 +16,9 @@ final class AppStore {
         }
     }
     var selectedSection: AppSection = .overview
+    var isCommandPalettePresented = false
+    var sectionSearchQuery = ""
+    var commandPaletteQuery = ""
     var sectionNavigationOrder: [String] = AppSection.allCases.map(\.id)
     var commandOutput: [String] = ["ABSDEV Studio ready."]
     var processes: [DevProcess] = [
@@ -108,6 +113,7 @@ final class AppStore {
 
     @ObservationIgnored private var runningProcesses: [UUID: Process] = [:]
     @ObservationIgnored private var activeForegroundCommand: Process?
+    @ObservationIgnored private var foregroundCommandStartedAt: Date?
     @ObservationIgnored private var processPipes: [UUID: [Pipe]] = [:]
     @ObservationIgnored private var commandRunOutput: [UUID: [String]] = [:]
     @ObservationIgnored private var testCommandRuns: Set<UUID> = []
@@ -273,6 +279,107 @@ final class AppStore {
             }
         }
         return false
+    }
+
+    var commandPaletteItems: [CommandPaletteItem] {
+        var items = availableSections.map { section in
+            CommandPaletteItem(
+                id: "section:\(section.id)",
+                title: section.rawValue,
+                subtitle: "Open \(section.rawValue)",
+                symbol: section.symbol,
+                keywords: [section.rawValue, "section", "navigate"],
+                kind: .section(section)
+            )
+        }
+
+        items += [
+            CommandPaletteItem(id: "action:add-project", title: "Add Laravel Project", subtitle: "Choose another Laravel project", symbol: "plus.circle.fill", keywords: ["open", "project", "folder"], kind: .action("add-project")),
+            CommandPaletteItem(id: "action:browser", title: "Open Project in Browser", subtitle: selectedProject?.appURL ?? "Project application URL", symbol: "safari.fill", keywords: ["url", "website", "browser"], kind: .action("browser")),
+            CommandPaletteItem(id: "action:finder", title: "Reveal Project in Finder", subtitle: selectedProject?.path ?? "Project folder", symbol: "folder.fill", keywords: ["folder", "files", "reveal"], kind: .action("finder")),
+            CommandPaletteItem(id: "action:quick-look", title: "Quick Look Project", subtitle: "Preview README or composer.json", symbol: "eye.fill", keywords: ["preview", "readme", "composer"], kind: .action("quick-look")),
+            CommandPaletteItem(id: "action:editor", title: "Open Project in Editor", subtitle: editor, symbol: "hammer.fill", keywords: ["code", "ide", "editor"], kind: .action("editor")),
+            CommandPaletteItem(id: "action:refresh", title: "Refresh Project Capabilities", subtitle: "Rescan installed packages, files and commands", symbol: "arrow.clockwise", keywords: ["scan", "reload", "capabilities"], kind: .action("refresh"))
+        ]
+
+        items += artisanCommands.prefix(250).map { command in
+            CommandPaletteItem(
+                id: "artisan:\(command.name)",
+                title: command.name,
+                subtitle: command.description.isEmpty ? "Run Artisan command" : command.description,
+                symbol: "terminal.fill",
+                keywords: ["artisan", command.namespace] + command.aliases,
+                kind: .artisan(command.name)
+            )
+        }
+        return items
+    }
+
+    var filteredCommandPaletteItems: [CommandPaletteItem] {
+        let query = commandPaletteQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return Array(commandPaletteItems.prefix(80)) }
+        let terms = query.lowercased().split(separator: " ").map(String.init)
+        return commandPaletteItems.filter { item in
+            let haystack = ([item.title, item.subtitle] + item.keywords).joined(separator: " ").lowercased()
+            return terms.allSatisfy { haystack.contains($0) }
+        }.prefix(80).map { $0 }
+    }
+
+    func presentCommandPalette() {
+        commandPaletteQuery = ""
+        isCommandPalettePresented = true
+    }
+
+    func executePaletteItem(_ item: CommandPaletteItem) {
+        isCommandPalettePresented = false
+        switch item.kind {
+        case .section(let section):
+            withAnimation(.easeInOut(duration: 0.18)) { selectedSection = section }
+        case .artisan(let command):
+            selectedSection = .development
+            runArtisan(command)
+        case .action(let action):
+            switch action {
+            case "add-project": addProject()
+            case "browser": openBrowser()
+            case "finder": revealInFinder()
+            case "quick-look": quickLookProject()
+            case "editor": openInEditor()
+            case "refresh": refreshProjectCapabilities()
+            default: break
+            }
+        }
+    }
+
+    func quickLookProject() {
+        guard let project = selectedProject else { return }
+        let base = URL(fileURLWithPath: project.path)
+        let candidates = ["README.md", "composer.json", "artisan"].map { base.appendingPathComponent($0) }
+        let target = candidates.first { FileManager.default.fileExists(atPath: $0.path) } ?? base
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/qlmanage")
+        process.arguments = ["-p", target.path]
+        try? process.run()
+    }
+
+    func copyProjectPath() {
+        guard let path = selectedProject?.path else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(path, forType: .string)
+        statusMessage = "Project path copied"
+    }
+
+    private func postCompletionNotification(title: String, body: String) {
+        guard !NSApp.isActive else { return }
+        let center = UNUserNotificationCenter.current()
+        center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            guard granted else { return }
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            content.sound = .default
+            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+        }
     }
 
     func moveProject(_ projectID: LaravelProject.ID, before targetID: LaravelProject.ID) {
@@ -1999,6 +2106,7 @@ final class AppStore {
         commandProgressCommand = command
         commandProgressDetail = "Starting in \(projectName)…"
         commandProgressStartedAt = Date()
+        foregroundCommandStartedAt = commandProgressStartedAt
         isCommandProgressPresented = true
 
         let task = Process()
@@ -2037,6 +2145,12 @@ final class AppStore {
                 self.isCommandProgressPresented = false
                 self.commandProgressStartedAt = nil
                 self.activeForegroundCommand = nil
+                let duration = Date().timeIntervalSince(self.foregroundCommandStartedAt ?? Date())
+                self.foregroundCommandStartedAt = nil
+                self.postCompletionNotification(
+                    title: status == 0 ? "Command completed" : "Command failed",
+                    body: "\(command) \(status == 0 ? "finished" : "failed") in \(String(format: "%.1f", duration))s."
+                )
 
                 let lines = self.commandRunOutput.removeValue(forKey: runID) ?? []
                 if status == 0 && lines.isEmpty {
@@ -2067,6 +2181,7 @@ final class AppStore {
             isCommandProgressPresented = false
             commandProgressStartedAt = nil
             activeForegroundCommand = nil
+            foregroundCommandStartedAt = nil
         }
     }
 

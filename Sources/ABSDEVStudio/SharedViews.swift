@@ -275,6 +275,7 @@ final class FocusableLocalProcessTerminalView: LocalProcessTerminalView {
     }
 }
 
+@MainActor
 struct InteractiveTerminalView: NSViewRepresentable {
     let sessionID: UUID
     let executable: String
@@ -284,7 +285,10 @@ struct InteractiveTerminalView: NSViewRepresentable {
     let onTermination: @MainActor @Sendable (Int32?) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(sessionID: sessionID, onTermination: onTermination)
+        let terminationHandler: @MainActor @Sendable (Int32?) -> Void = { exitCode in
+            onTermination(exitCode)
+        }
+        return Coordinator(sessionID: sessionID, onTermination: terminationHandler)
     }
 
     func makeNSView(context: Context) -> LocalProcessTerminalView {
