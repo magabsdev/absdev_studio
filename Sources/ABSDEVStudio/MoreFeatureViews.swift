@@ -253,24 +253,195 @@ struct ComposerView: View {
 
 struct SchedulerView: View {
     @Environment(AppStore.self) private var store
+
+    private let tasks = [
+        ScheduleTask(
+            command: "schedule:list",
+            summary: "Read current schedule",
+            status: "Now",
+            purpose: "Show all scheduled tasks"
+        ),
+        ScheduleTask(
+            command: "schedule:run",
+            summary: "Run tasks that are due",
+            status: "On demand",
+            purpose: "Run due scheduled tasks"
+        ),
+        ScheduleTask(
+            command: "schedule:test",
+            summary: "Interactively test a task",
+            status: "On demand",
+            purpose: "Test a scheduled task interactively"
+        )
+    ]
+
     var body: some View {
-        ScrollView { VStack(alignment: .leading, spacing: 22) {
-            HStack { PageHeader(title: "Scheduler", subtitle: "Inspect and run Laravel scheduled tasks."); Spacer(); Button("Refresh Schedule") { run("schedule:list") }.buttonStyle(.borderedProminent) }
-            ScheduleRow(command: "schedule:list", cadence: "Read current schedule", next: "Now") { run("schedule:list") }
-            ScheduleRow(command: "schedule:run", cadence: "Run tasks that are due", next: "On demand") { run("schedule:run") }
-            ScheduleRow(command: "schedule:test", cadence: "Interactively test a task", next: "On demand") { run("schedule:test") }
-        }.padding(28) }
+        VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 16) {
+                PageHeader(title: "Scheduler", subtitle: "Inspect and run Laravel scheduled tasks.")
+                Spacer()
+                Button("Refresh Schedule", systemImage: "arrow.clockwise") {
+                    run("schedule:list")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding(.horizontal, 28)
+            .padding(.top, 24)
+            .padding(.bottom, 18)
+
+            Divider()
+
+            ScrollView {
+                LazyVGrid(
+                    columns: [
+                        GridItem(
+                            .adaptive(minimum: 320, maximum: 520),
+                            spacing: 20,
+                            alignment: .top
+                        )
+                    ],
+                    alignment: .leading,
+                    spacing: 20
+                ) {
+                    ForEach(tasks) { task in
+                        ScheduleCard(task: task) {
+                            run(task.command)
+                        }
+                    }
+                }
+                .padding(.horizontal, 28)
+                .padding(.vertical, 24)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
-    private func run(_ command: String) { store.runArtisan(command); store.selectedSection = .artisan }
+
+    private func run(_ command: String) {
+        store.runArtisan(command)
+        store.selectedSection = .artisan
+    }
 }
 
-private struct ScheduleRow: View {
+private struct ScheduleTask: Identifiable {
     let command: String
-    let cadence: String
-    let next: String
+    let summary: String
+    let status: String
+    let purpose: String
+
+    var id: String { command }
+}
+
+private struct ScheduleCard: View {
+    let task: ScheduleTask
     let action: () -> Void
+
+    private var isImmediate: Bool { task.status == "Now" }
+
     var body: some View {
-        HStack(spacing: 14) { Image(systemName: "clock.badge.checkmark").font(.title2).foregroundStyle(.blue); VStack(alignment: .leading, spacing: 3) { Text(command).font(.callout.monospaced().weight(.semibold)); Text(cadence).font(.caption).foregroundStyle(.secondary) }; Spacer(); Text(next).foregroundStyle(.secondary); Button("Run Now", action: action) }.padding(17).background(.background.secondary, in: RoundedRectangle(cornerRadius: 12)).overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator))
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .top, spacing: 14) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 11, style: .continuous)
+                            .fill(.blue.opacity(0.13))
+                        Image(systemName: "clock.badge.checkmark")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundStyle(.blue)
+                    }
+                    .frame(width: 48, height: 48)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(task.command)
+                            .font(.headline.monospaced())
+                            .lineLimit(1)
+                        Text(task.summary)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2, reservesSpace: true)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    Text(task.status)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(isImmediate ? .green : .orange)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            (isImmediate ? Color.green : Color.orange).opacity(0.10),
+                            in: Capsule()
+                        )
+                        .overlay {
+                            Capsule()
+                                .stroke(
+                                    (isImmediate ? Color.green : Color.orange).opacity(0.35),
+                                    lineWidth: 1
+                                )
+                        }
+                }
+
+                Divider()
+
+                ScheduleDetailRow(
+                    icon: "calendar",
+                    title: "Status",
+                    value: task.status
+                )
+
+                Divider()
+
+                ScheduleDetailRow(
+                    icon: "list.bullet.rectangle",
+                    title: "Purpose",
+                    value: task.purpose
+                )
+            }
+            .padding(18)
+
+            Spacer(minLength: 0)
+
+            Divider()
+
+            HStack {
+                Spacer()
+                Button("Run Now", systemImage: "play.fill", action: action)
+                    .buttonStyle(.borderedProminent)
+            }
+            .padding(16)
+        }
+        .frame(maxWidth: .infinity, minHeight: 330, alignment: .topLeading)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(.separator, lineWidth: 1)
+        }
+    }
+}
+
+private struct ScheduleDetailRow: View {
+    let icon: String
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(.indigo)
+                .frame(width: 22)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .font(.callout)
+                    .lineLimit(2, reservesSpace: true)
+            }
+
+            Spacer(minLength: 0)
+        }
     }
 }
 import SwiftUI

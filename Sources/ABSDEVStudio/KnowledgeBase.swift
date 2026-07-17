@@ -372,36 +372,153 @@ struct KBManifest: Codable {
   }
 
   func restore(documentID: UUID) {
-    guard let document = documents.first(where: { $0.id == documentID }) else { return }
-    document.isTrashed = false
-    document.deletedAt = nil
-    document.updatedAt = Date()
-    save()
-    reload()
-    selection = documentID
-    KBSpotlightIndexer.shared.index(document)
+    saver?.cancel()
+    saver = nil
+    selection = nil
+    status = "Restoring…"
+
+    // Context-menu and Menu content is hosted by a remote AppKit view. Yield one
+    // run-loop turn so that view can dismiss before changing the fetched objects
+    // which backed it. Capturing only the UUID also avoids retaining a managed
+    // object across the asynchronous boundary.
+    Task { @MainActor [weak self] in
+      await Task.yield()
+      guard let self else { return }
+
+      let request = NSFetchRequest<KBDocument>(entityName: "KBDocument")
+      request.fetchLimit = 1
+      request.predicate = NSPredicate(
+        format: "projectID == %@ AND id == %@",
+        self.projectID as CVarArg,
+        documentID as CVarArg
+      )
+
+      do {
+        guard let document = try self.context.fetch(request).first else {
+          self.reload()
+          self.status = "Ready"
+          return
+        }
+        document.isTrashed = false
+        document.deletedAt = nil
+        document.updatedAt = Date()
+        try self.context.save()
+
+        let spotlight = KBSpotlightDocument(
+          id: document.id,
+          title: document.title,
+          text: document.text,
+          tags: document.tags
+        )
+        self.showingTrash = false
+        self.reload()
+        self.selection = documentID
+        self.status = "Restored"
+        KBSpotlightIndexer.shared.index(spotlight)
+      } catch {
+        self.context.rollback()
+        self.reload()
+        self.status = "Ready"
+        self.error = error.localizedDescription
+      }
+    }
   }
 
   func permanentlyDelete(documentID: UUID) {
-    guard let document = documents.first(where: { $0.id == documentID }) else { return }
-    let folderURL = folder(documentID)
-    context.delete(document)
-    save()
-    try? FileManager.default.removeItem(at: folderURL)
+    saver?.cancel()
+    saver = nil
     selection = nil
-    reload()
-    KBSpotlightIndexer.shared.remove(documentID: documentID)
+    status = "Deleting…"
+
+    Task { @MainActor [weak self] in
+      await Task.yield()
+      guard let self else { return }
+
+      let request = NSFetchRequest<KBDocument>(entityName: "KBDocument")
+      request.fetchLimit = 1
+      request.predicate = NSPredicate(
+        format: "projectID == %@ AND id == %@ AND isTrashed == YES",
+        self.projectID as CVarArg,
+        documentID as CVarArg
+      )
+
+      do {
+        guard let document = try self.context.fetch(request).first else {
+          self.reload()
+          self.status = "Ready"
+          return
+        }
+        let folderURL = self.folder(documentID)
+
+        // Clear the observable list before invalidating any managed objects.
+        self.documents = []
+        await Task.yield()
+
+        self.context.delete(document)
+        try self.context.save()
+        self.context.reset()
+        self.reload()
+        self.status = "Deleted permanently"
+
+        try? FileManager.default.removeItem(at: folderURL)
+        KBSpotlightIndexer.shared.remove(documentID: documentID)
+      } catch {
+        self.context.rollback()
+        self.context.reset()
+        self.reload()
+        self.status = "Ready"
+        self.error = error.localizedDescription
+      }
+    }
   }
 
   func emptyTrash() {
-    for document in documents where document.isTrashed {
-      let folderURL = folder(document.id)
-      context.delete(document)
-      try? FileManager.default.removeItem(at: folderURL)
-    }
-    save()
+    saver?.cancel()
+    saver = nil
     selection = nil
-    reload()
+    status = "Emptying Trash…"
+
+    Task { @MainActor [weak self] in
+      await Task.yield()
+      guard let self else { return }
+
+      let request = NSFetchRequest<KBDocument>(entityName: "KBDocument")
+      request.predicate = NSPredicate(
+        format: "projectID == %@ AND isTrashed == YES",
+        self.projectID as CVarArg
+      )
+
+      do {
+        let trashed = try self.context.fetch(request)
+        guard !trashed.isEmpty else {
+          self.reload()
+          self.status = "Trash is empty"
+          return
+        }
+
+        // Copy plain values before deleting; never retain deleted managed objects.
+        let deletedIDs = trashed.map(\.id)
+        let folderURLs = deletedIDs.map(self.folder)
+
+        self.documents = []
+        await Task.yield()
+
+        trashed.forEach(self.context.delete)
+        try self.context.save()
+        self.context.reset()
+        self.reload()
+        self.status = "Trash emptied"
+
+        folderURLs.forEach { try? FileManager.default.removeItem(at: $0) }
+        KBSpotlightIndexer.shared.remove(documentIDs: deletedIDs)
+      } catch {
+        self.context.rollback()
+        self.context.reset()
+        self.reload()
+        self.status = "Ready"
+        self.error = error.localizedDescription
+      }
+    }
   }
 
   func updateMetadata(tags: String? = nil, favorite: Bool? = nil) {
@@ -2036,18 +2153,61 @@ private final class KBVersionStore {
   }
 }
 
-private final class KBSpotlightIndexer {
+private struct KBSpotlightDocument: Sendable {
+  let id: UUID
+  let title: String
+  let text: String
+  let tags: String
+}
+
+private final class KBSpotlightIndexer: @unchecked Sendable {
   static let shared = KBSpotlightIndexer()
+  private let queue = DispatchQueue(label: "com.absdev.studio.knowledge.spotlight")
+
   func index(_ document: KBDocument) {
-    let attributes = CSSearchableItemAttributeSet(contentType: .text)
-    attributes.title = document.title
-    attributes.contentDescription = document.text
-    attributes.keywords = document.tags.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-    let item = CSSearchableItem(uniqueIdentifier: document.id.uuidString, domainIdentifier: "com.absdev.studio.knowledge", attributeSet: attributes)
-    CSSearchableIndex.default().indexSearchableItems([item])
+    index(KBSpotlightDocument(
+      id: document.id,
+      title: document.title,
+      text: document.text,
+      tags: document.tags
+    ))
   }
+
+  func index(_ document: KBSpotlightDocument) {
+    queue.async {
+      let attributes = CSSearchableItemAttributeSet(contentType: .text)
+      attributes.title = document.title
+      attributes.contentDescription = document.text
+      attributes.keywords = document.tags.split(separator: ",").map {
+        $0.trimmingCharacters(in: .whitespaces)
+      }
+      let item = CSSearchableItem(
+        uniqueIdentifier: document.id.uuidString,
+        domainIdentifier: "com.absdev.studio.knowledge",
+        attributeSet: attributes
+      )
+      CSSearchableIndex.default().indexSearchableItems([item]) { error in
+        if let error {
+          NSLog("ABSDEV Knowledge Spotlight indexing skipped: %@", error.localizedDescription)
+        }
+      }
+    }
+  }
+
   func remove(documentID: UUID) {
-    CSSearchableIndex.default().deleteSearchableItems(withIdentifiers: [documentID.uuidString])
+    remove(documentIDs: [documentID])
+  }
+
+  func remove(documentIDs: [UUID]) {
+    guard !documentIDs.isEmpty else { return }
+    let identifiers = documentIDs.map(\.uuidString)
+    queue.async {
+      CSSearchableIndex.default().deleteSearchableItems(withIdentifiers: identifiers) { error in
+        if let error {
+          NSLog("ABSDEV Knowledge Spotlight removal skipped: %@", error.localizedDescription)
+        }
+      }
+    }
   }
 }
 
