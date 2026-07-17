@@ -1037,29 +1037,23 @@ struct DoctorView: View {
             Divider()
 
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
+                LazyVGrid(
+                    columns: [
+                        GridItem(
+                            .adaptive(minimum: 320, maximum: 520),
+                            spacing: 20,
+                            alignment: .top
+                        )
+                    ],
+                    alignment: .leading,
+                    spacing: 20
+                ) {
                     ForEach(store.diagnostics) { item in
-                        HStack(alignment: .center, spacing: 14) {
-                            Image(systemName: icon(item.status))
-                                .font(.title2)
-                                .foregroundStyle(color(item.status))
-                                .frame(width: 28)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(item.title).font(.headline)
-                                Text(item.detail).font(.callout).foregroundStyle(.secondary)
-                            }
-                            Spacer(minLength: 20)
-                            if let action = item.action {
-                                Button(action) { store.executeDiagnostic(item) }
-                            }
-                        }
-                        .padding(18)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
-                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator.opacity(0.7)))
+                        diagnosticCard(item)
                     }
                 }
-                .padding(28)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 24)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
@@ -1068,6 +1062,59 @@ struct DoctorView: View {
             if store.diagnostics.isEmpty {
                 await store.runDiagnostics()
             }
+        }
+    }
+
+    private func diagnosticCard(_ item: DiagnosticItem) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 14) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(color(item.status).opacity(0.13))
+                    Image(systemName: icon(item.status))
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(color(item.status))
+                }
+                .frame(width: 42, height: 42)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.title)
+                        .font(.headline)
+                        .lineLimit(2)
+                    Text(statusTitle(item.status))
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(color(item.status))
+                }
+
+                Spacer(minLength: 8)
+            }
+
+            Text(item.detail)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(3, reservesSpace: true)
+
+            HStack {
+                Spacer()
+                if let action = item.action {
+                    Button(action) { store.executeDiagnostic(item) }
+                }
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, minHeight: 170, alignment: .topLeading)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 16))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(.separator.opacity(0.7))
+        }
+    }
+
+    private func statusTitle(_ status: DiagnosticItem.Status) -> String {
+        switch status {
+        case .healthy: "Healthy"
+        case .warning: "Warning"
+        case .error: "Problem"
         }
     }
 
