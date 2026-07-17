@@ -217,6 +217,11 @@ final class AppStore {
             case .sail: isSailRunning
             case .servBay: isServBayInstalled
             case .containers: isDockerRunning || isAppleContainerRunning
+            case .realtime: projectContainsAnyPackage(["laravel/reverb"])
+            case .observability: projectContainsAnyPackage(["laravel/pulse", "laravel/telescope", "laravel/horizon", "laravel/octane", "barryvdh/laravel-debugbar"])
+            case .featureFlags: projectContainsAnyPackage(["laravel/pennant"])
+            case .aiInspector: projectContainsAnyPackage(["laravel/ai"])
+            case .frontend: selectedProject.map { FileManager.default.fileExists(atPath: URL(fileURLWithPath: $0.path).appendingPathComponent("package.json").path) } ?? false
             default: true
             }
         }
@@ -229,6 +234,14 @@ final class AppStore {
             }
             return left < right
         }
+    }
+
+    private func projectContainsAnyPackage(_ packageNames: [String]) -> Bool {
+        guard let project = selectedProject else { return false }
+        let root = URL(fileURLWithPath: project.path)
+        let candidates = ["composer.lock", "composer.json"]
+        let contents = candidates.compactMap { try? String(contentsOf: root.appendingPathComponent($0), encoding: .utf8) }.joined(separator: "\n")
+        return packageNames.contains { contents.localizedCaseInsensitiveContains("\"\($0)\"") }
     }
 
     func moveProject(_ projectID: LaravelProject.ID, before targetID: LaravelProject.ID) {

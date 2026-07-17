@@ -45,6 +45,24 @@ enum AppSection: String, CaseIterable, Identifiable {
     case scheduler = "Scheduler"
     case containers = "Containers"
     case servBay = "ServBay"
+    case applicationStatus = "Application Status"
+    case cacheControl = "Cache Control"
+    case migrations = "Migrations"
+    case events = "Events & Listeners"
+    case models = "Models"
+    case services = "Services & Integrations"
+    case testing = "Testing Centre"
+    case frontend = "Frontend"
+    case realtime = "Real-Time Services"
+    case observability = "Observability"
+    case featureFlags = "Feature Flags"
+    case deployment = "Deployment"
+    case maintenance = "Maintenance Mode"
+    case architecture = "Architecture Map"
+    case storage = "Storage"
+    case apiCentre = "API Centre"
+    case mailPreview = "Mail & Notifications"
+    case aiInspector = "Laravel AI"
 
     var id: String { rawValue }
 
@@ -69,6 +87,24 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .scheduler: "calendar.badge.clock"
         case .containers: "shippingbox.and.arrow.backward.fill"
         case .servBay: "server.rack"
+        case .applicationStatus: "heart.text.square.fill"
+        case .cacheControl: "bolt.horizontal.circle.fill"
+        case .migrations: "arrow.up.arrow.down.square.fill"
+        case .events: "point.3.connected.trianglepath.dotted"
+        case .models: "cube.transparent.fill"
+        case .services: "switch.2"
+        case .testing: "checkmark.seal.fill"
+        case .frontend: "paintbrush.pointed.fill"
+        case .realtime: "wave.3.right.circle.fill"
+        case .observability: "gauge.with.dots.needle.67percent"
+        case .featureFlags: "flag.pattern.checkered"
+        case .deployment: "shippingbox.and.arrow.backward.fill"
+        case .maintenance: "wrench.and.screwdriver.fill"
+        case .architecture: "square.3.layers.3d"
+        case .storage: "externaldrive.fill"
+        case .apiCentre: "network"
+        case .mailPreview: "envelope.badge.fill"
+        case .aiInspector: "brain.head.profile.fill"
         }
     }
 
@@ -93,6 +129,24 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .scheduler: .teal
         case .containers: .blue
         case .servBay: .pink
+        case .applicationStatus: .green
+        case .cacheControl: .yellow
+        case .migrations: .orange
+        case .events: .purple
+        case .models: .indigo
+        case .services: .teal
+        case .testing: .green
+        case .frontend: .pink
+        case .realtime: .cyan
+        case .observability: .mint
+        case .featureFlags: .orange
+        case .deployment: .blue
+        case .maintenance: .red
+        case .architecture: .purple
+        case .storage: .brown
+        case .apiCentre: .indigo
+        case .mailPreview: .blue
+        case .aiInspector: .pink
         }
     }
 }
