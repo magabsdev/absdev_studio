@@ -1,5 +1,6 @@
 import AppKit
 import CoreData
+import CoreSpotlight
 import CryptoKit
 import Observation
 import QuickLookThumbnailing
@@ -17,6 +18,11 @@ import UniformTypeIdentifiers
   @NSManaged var updatedAt: Date
   @NSManaged var attachments: Set<KBAttachment>
   @NSManaged var richTextData: Data?
+  @NSManaged var tags: String
+  @NSManaged var isFavorite: Bool
+  @NSManaged var isTrashed: Bool
+  @NSManaged var deletedAt: Date?
+  @NSManaged var version: Int32
 }
 @objc(KBAttachment) final class KBAttachment: NSManagedObject, Identifiable {
   @NSManaged var id: UUID
@@ -180,6 +186,11 @@ final class KBPersistence {
       a("createdAt", .dateAttributeType, false, Date()),
       a("updatedAt", .dateAttributeType, false, Date()),
       a("richTextData", .binaryDataAttributeType, true),
+      a("tags", .stringAttributeType, false, ""),
+      a("isFavorite", .booleanAttributeType, false, false),
+      a("isTrashed", .booleanAttributeType, false, false),
+      a("deletedAt", .dateAttributeType, true),
+      a("version", .integer32AttributeType, false, 1),
     ]
     f.properties = [
       a("id", .UUIDAttributeType, false, UUID()),
@@ -247,6 +258,7 @@ struct KBManifest: Codable {
   var error: String?
   var copied: UUID?
   var cut = false
+  var showingTrash = false
   private var saver: Task<Void, Never>?
   init(projectID: UUID, persistence: KBPersistence = .shared) {
     self.projectID = projectID
@@ -260,7 +272,8 @@ struct KBManifest: Codable {
   }
   var visible: [KBDocument] {
     var r = documents.filter {
-      (filter == nil || $0.priority == filter!.rawValue)
+      $0.isTrashed == showingTrash
+        && (filter == nil || $0.priority == filter!.rawValue)
         && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search)
           || $0.text.localizedCaseInsensitiveContains(search)
           || $0.attachments.contains {
@@ -313,6 +326,10 @@ struct KBManifest: Codable {
     d.order = (documents.map(\.order).max() ?? -1) + 1
     d.createdAt = Date()
     d.updatedAt = Date()
+    d.tags = ""
+    d.isFavorite = false
+    d.isTrashed = false
+    d.version = 1
     save()
     reload()
 
@@ -343,42 +360,65 @@ struct KBManifest: Codable {
   func delete(documentID: UUID) {
     saver?.cancel()
     saver = nil
-
-    guard let document = documents.first(where: { $0.id == documentID }),
-      !document.isInserted, !document.isDeleted, !document.hasChanges
-    else { return }
-
-    // Clear all view state before deleting the managed object. The Core Data closure performs
-    // persistence work only; all observable state is updated on the main actor afterwards.
-    let objectID = document.objectID
-    let attachmentFolder = folder(documentID)
+    guard let document = documents.first(where: { $0.id == documentID }), !document.isDeleted else { return }
     selection = nil
-    documents.removeAll { $0.id == documentID }
-    status = "Deleting…"
+    document.isTrashed = true
+    document.deletedAt = Date()
+    document.updatedAt = Date()
+    save()
+    status = "Moved to Trash"
+    reload()
+    KBSpotlightIndexer.shared.remove(documentID: documentID)
+  }
 
-    var deletionError: Error?
-    context.performAndWait {
-      do {
-        if let stored = try? context.existingObject(with: objectID), !stored.isDeleted {
-          context.delete(stored)
-          try context.save()
-        }
-      } catch {
-        context.rollback()
-        deletionError = error
-      }
+  func restore(documentID: UUID) {
+    guard let document = documents.first(where: { $0.id == documentID }) else { return }
+    document.isTrashed = false
+    document.deletedAt = nil
+    document.updatedAt = Date()
+    save()
+    reload()
+    selection = documentID
+    KBSpotlightIndexer.shared.index(document)
+  }
+
+  func permanentlyDelete(documentID: UUID) {
+    guard let document = documents.first(where: { $0.id == documentID }) else { return }
+    let folderURL = folder(documentID)
+    context.delete(document)
+    save()
+    try? FileManager.default.removeItem(at: folderURL)
+    selection = nil
+    reload()
+    KBSpotlightIndexer.shared.remove(documentID: documentID)
+  }
+
+  func emptyTrash() {
+    for document in documents where document.isTrashed {
+      let folderURL = folder(document.id)
+      context.delete(document)
+      try? FileManager.default.removeItem(at: folderURL)
     }
-
-    if let deletionError {
-      error = deletionError.localizedDescription
-      reload()
-      return
-    }
-
-    try? FileManager.default.removeItem(at: attachmentFolder)
-    status = "Saved"
+    save()
+    selection = nil
     reload()
   }
+
+  func updateMetadata(tags: String? = nil, favorite: Bool? = nil) {
+    guard let d = selected else { return }
+    if let tags { d.tags = tags }
+    if let favorite { d.isFavorite = favorite }
+    d.updatedAt = Date()
+    saveNow()
+  }
+
+  func createVersionSnapshot() {
+    guard let d = selected else { return }
+    KBVersionStore.shared.save(document: d)
+    d.version += 1
+    save()
+  }
+
   func copy() {
     copied = selection
     cut = false
@@ -407,6 +447,10 @@ struct KBManifest: Codable {
     d.order = (documents.map(\.order).max() ?? -1) + 1
     d.createdAt = Date()
     d.updatedAt = Date()
+    d.tags = source.tags
+    d.isFavorite = source.isFavorite
+    d.isTrashed = false
+    d.version = 1
     for a in source.attachments { try? clone(a, to: d) }
     let sourceArchive = richTextArchiveURL(for: source.id)
     let destinationArchive = richTextArchiveURL(for: d.id)
@@ -511,7 +555,7 @@ struct KBManifest: Codable {
     a.relativePath = "\(projectID.uuidString)/\(d.id.uuidString)/\(stored)"
     a.size = Int64((try? target.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
     a.data = try Data(contentsOf: target)
-    a.checksum = try SHA256.hash(data: a.data ?? Data()).map { String(format: "%02x", $0) }
+    a.checksum = SHA256.hash(data: a.data ?? Data()).map { String(format: "%02x", $0) }
       .joined()
     a.createdAt = Date()
     a.document = d
@@ -652,8 +696,10 @@ struct KBManifest: Codable {
     saver?.cancel()
     guard let d = selected else { return }
     d.updatedAt = Date()
+    createVersionSnapshot()
     save()
     status = "Saved"
+    KBSpotlightIndexer.shared.index(d)
   }
   private func save() {
     do { if context.hasChanges { try context.save() } } catch {
@@ -691,6 +737,9 @@ private struct KBWorkspace: View {
   @State private var selectedFontSize: Double = 14
   @State private var selectedTextColor = Color.white
   @State private var selectedHighlightColor = Color.clear
+  @State private var inspectorVisible = true
+  @State private var commandPaletteVisible = false
+  @State private var paletteSearch = ""
 
   var body: some View {
     VStack(spacing: 0) {
@@ -709,6 +758,14 @@ private struct KBWorkspace: View {
         documentEditor
           .frame(minWidth: 600, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
       }
+    }
+    .sheet(isPresented: $commandPaletteVisible) {
+      KBCommandPalette(store: store, search: $paletteSearch, isPresented: $commandPaletteVisible)
+    }
+    .onKeyPress(.init("p"), phases: .down) { press in
+      guard press.modifiers.contains([.command, .shift]) else { return .ignored }
+      commandPaletteVisible = true
+      return .handled
     }
     .alert(
       "Delete Document?",
@@ -782,6 +839,12 @@ private struct KBWorkspace: View {
       .keyboardShortcut("v", modifiers: .command)
       .disabled(store.copied == nil)
 
+      Button { commandPaletteVisible = true } label: {
+        Label("Find Document", systemImage: "command")
+      }
+      .keyboardShortcut("p", modifiers: [.command, .shift])
+
+
       Spacer(minLength: 12)
 
       Menu {
@@ -791,6 +854,15 @@ private struct KBWorkspace: View {
         Button("Import…") { store.importArchive() }
         Button("Export…") { store.exportArchive() }
           .disabled(store.documents.isEmpty)
+        Divider()
+        Button(store.showingTrash ? "Show Documents" : "Show Trash") {
+          store.selection = nil
+          store.showingTrash.toggle()
+        }
+        if store.showingTrash {
+          Button("Empty Trash", role: .destructive) { store.emptyTrash() }
+            .disabled(store.visible.isEmpty)
+        }
       } label: {
         Label("More", systemImage: "ellipsis.circle")
       }
@@ -873,9 +945,9 @@ private struct KBWorkspace: View {
 
       if store.visible.isEmpty {
         ContentUnavailableView {
-          Label("No Documents", systemImage: "doc.text")
+          Label(store.showingTrash ? "Trash is Empty" : "No Documents", systemImage: store.showingTrash ? "trash" : "doc.text")
         } description: {
-          Text("Create notes, guides and project documentation from the toolbar.")
+          Text(store.showingTrash ? "Deleted documents appear here until permanently removed." : "Create notes, guides and project documentation from the toolbar.")
         }
       } else {
         List(store.visible) { document in
@@ -916,11 +988,18 @@ private struct KBWorkspace: View {
                 store.move(up: false)
               }
               Divider()
-              Button("Delete", role: .destructive) {
-                store.selection = document.id
-                pendingDeleteID = document.id
+              if store.showingTrash {
+                Button("Restore") { store.restore(documentID: document.id) }
+                Button("Delete Permanently", role: .destructive) {
+                  store.permanentlyDelete(documentID: document.id)
+                }
+              } else {
+                Button("Move to Trash", role: .destructive) {
+                  store.selection = document.id
+                  pendingDeleteID = document.id
+                }
+                .disabled(document.isInserted || document.isDeleted || document.hasChanges)
               }
-              .disabled(document.isInserted || document.isDeleted || document.hasChanges)
             }
         }
         .listStyle(.sidebar)
@@ -942,6 +1021,9 @@ private struct KBWorkspace: View {
 
         Spacer(minLength: 6)
 
+        if document.isFavorite {
+          Image(systemName: "star.fill").foregroundStyle(.yellow)
+        }
         if !document.attachments.isEmpty {
           Label("\(document.attachments.count)", systemImage: "paperclip")
             .font(.caption2)
@@ -983,6 +1065,7 @@ private struct KBWorkspace: View {
 
   @ViewBuilder private var documentEditor: some View {
     if let document = store.selected {
+      HStack(spacing: 0) {
       VStack(spacing: 0) {
         VStack(alignment: .leading, spacing: 12) {
           HStack(alignment: .center, spacing: 10) {
@@ -997,38 +1080,59 @@ private struct KBWorkspace: View {
 
             Spacer()
 
-            let selectedPriority = KBPriority(rawValue: document.priority) ?? .normal
-            Menu {
-              ForEach(KBPriority.allCases) { priority in
-                Button {
-                  store.update(priority: priority)
-                } label: {
-                  Label(priority.name, systemImage: priority.icon)
-                }
-              }
+            Button {
+              store.updateMetadata(favorite: !document.isFavorite)
             } label: {
-              HStack(spacing: 7) {
-                Image(systemName: selectedPriority.icon)
-                  .foregroundStyle(selectedPriority.colour)
-                Text(selectedPriority.name)
-                  .fontWeight(.semibold)
-                  .foregroundStyle(selectedPriority.colour)
-                Image(systemName: "chevron.up.chevron.down")
-                  .font(.caption2.weight(.semibold))
-                  .foregroundStyle(.secondary)
-              }
-              .padding(.horizontal, 11)
-              .padding(.vertical, 7)
-              .background(selectedPriority.colour.opacity(0.14), in: Capsule())
-              .overlay {
-                Capsule()
-                  .stroke(selectedPriority.colour.opacity(0.35), lineWidth: 1)
-              }
-              .contentShape(Capsule())
+              Image(systemName: document.isFavorite ? "star.fill" : "star")
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize(horizontal: true, vertical: false)
-            .help("Document priority")
+            .buttonStyle(.borderless)
+            .foregroundStyle(document.isFavorite ? .yellow : .secondary)
+            .help(document.isFavorite ? "Remove from Favorites" : "Add to Favorites")
+
+              let selectedPriority = KBPriority(rawValue: document.priority) ?? .normal
+
+              Menu {
+                ForEach(KBPriority.allCases) { priority in
+                  Button {
+                    store.update(priority: priority)
+                  } label: {
+                    Label(priority.name, systemImage: priority.icon)
+                  }
+                }
+              } label: {
+                HStack(spacing: 7) {
+                  Image(systemName: selectedPriority.icon)
+                    .foregroundStyle(.white)
+
+                  Text(selectedPriority.name)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+
+                  Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.85))
+                }
+                .padding(.horizontal, 11)
+                .padding(.vertical, 7)
+                .background {
+                  Capsule()
+                    .fill(selectedPriority.colour)
+                }
+                .overlay {
+                  Capsule()
+                    .stroke(.white.opacity(0.22), lineWidth: 1)
+                }
+                .shadow(
+                  color: selectedPriority.colour.opacity(0.30),
+                  radius: 3,
+                  y: 1
+                )
+                .contentShape(Capsule())
+              }
+              .menuStyle(.borderlessButton)
+              .fixedSize(horizontal: true, vertical: false)
+              .help("Document priority")
+
 
             Button {
               store.saveNow()
@@ -1042,7 +1146,7 @@ private struct KBWorkspace: View {
             Button(role: .destructive) {
               pendingDeleteID = document.id
             } label: {
-              Label("Delete", systemImage: "trash")
+              Label("Move to Trash", systemImage: "trash")
             }
             .buttonStyle(.bordered)
             .keyboardShortcut(.delete, modifiers: .command)
@@ -1051,6 +1155,19 @@ private struct KBWorkspace: View {
             .help(
               store.canDeleteSelected
                 ? "Delete this saved document" : "Save the document before deleting it")
+
+
+            Button {
+              inspectorVisible.toggle()
+            } label: {
+              Label(
+                inspectorVisible ? "Hide Inspector" : "Show Inspector",
+                systemImage: "sidebar.right"
+              )
+            }
+            .buttonStyle(.borderedProminent)
+            .fixedSize(horizontal: true, vertical: false)
+            .help(inspectorVisible ? "Hide Inspector" : "Show Inspector")
           }
 
           TextField(
@@ -1135,6 +1252,14 @@ private struct KBWorkspace: View {
                   .help("Italic")
                 Button { formatCommand = .underline } label: { Image(systemName: "underline") }
                   .help("Underline")
+              }
+              .controlSize(.small)
+
+              ControlGroup {
+                Button { formatCommand = .bulletList } label: { Image(systemName: "list.bullet") }
+                  .help("Bulleted List")
+                Button { formatCommand = .numberedList } label: { Image(systemName: "list.number") }
+                  .help("Numbered List")
               }
               .controlSize(.small)
 
@@ -1239,6 +1364,12 @@ private struct KBWorkspace: View {
         store.drop(urls)
         return true
       }
+      if inspectorVisible {
+        Divider()
+        KBInspector(store: store, document: document)
+          .frame(minWidth: 240, idealWidth: 280, maxWidth: 340, maxHeight: .infinity)
+      }
+      }
     } else {
       Color.clear
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1292,6 +1423,8 @@ private enum KBFormatCommand {
   case textColor(NSColor)
   case highlightColor(NSColor)
   case alignment(NSTextAlignment)
+  case bulletList
+  case numberedList
 }
 
 private struct KBInlineInsertion: Equatable {
@@ -1346,9 +1479,17 @@ private struct KBInlineDocumentEditor: NSViewRepresentable {
       context.coordinator.insert(insertion.attachments)
       DispatchQueue.main.async { self.insertion = nil }
     }
-    if let formatCommand {
-      context.coordinator.apply(formatCommand)
-      DispatchQueue.main.async { self.formatCommand = nil }
+    if let formatCommand, !context.coordinator.isFormatCommandQueued {
+      context.coordinator.isFormatCommandQueued = true
+      let coordinator = context.coordinator
+
+      // NSTextView formatting can invalidate AppKit layout. Running it synchronously
+      // inside updateNSView causes a recursive constraints-update cycle on macOS.
+      DispatchQueue.main.async {
+        coordinator.apply(formatCommand)
+        coordinator.isFormatCommandQueued = false
+        self.formatCommand = nil
+      }
     }
     editor.isEditable = true
   }
@@ -1359,6 +1500,8 @@ private struct KBInlineDocumentEditor: NSViewRepresentable {
     weak var editor: NSTextView?
     var isEditing = false
     var lastInsertionID: UUID?
+    var isFormatCommandQueued = false
+    private var archiveSaveGeneration = UUID()
 
     init(_ parent: KBInlineDocumentEditor) { self.parent = parent }
 
@@ -1376,7 +1519,10 @@ private struct KBInlineDocumentEditor: NSViewRepresentable {
     func loadInitialContent(fallback: String) {
       guard let editor else { return }
       if let data = parent.richTextData,
-        let archived = try? NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(data) as? NSAttributedString,
+        let archived = try? NSKeyedUnarchiver.unarchivedObject(
+          ofClass: NSAttributedString.self,
+          from: data
+        ),
         !archived.string.contains("[[attachment:")
       {
         isRendering = true
@@ -1420,14 +1566,26 @@ private struct KBInlineDocumentEditor: NSViewRepresentable {
 
     private func saveArchive() {
       guard let storage = editor?.textStorage else { return }
-      do {
-        let data = try NSKeyedArchiver.archivedData(
-          withRootObject: NSAttributedString(attributedString: storage),
-          requiringSecureCoding: false
-        )
-        parent.richTextData = data
-      } catch {
-        // Plain text remains safely stored in Core Data even if rich-text persistence fails.
+
+      let snapshot = NSAttributedString(attributedString: storage)
+      guard let data = try? NSKeyedArchiver.archivedData(
+        withRootObject: snapshot,
+        requiringSecureCoding: false
+      ) else {
+        // Plain text remains safely stored if rich-text archiving fails.
+        return
+      }
+
+      // Avoid publishing the same archive repeatedly. Reassigning identical data causes
+      // SwiftUI to update this representable again and can create an AppKit layout loop.
+      guard data != parent.richTextData else { return }
+
+      let generation = UUID()
+      archiveSaveGeneration = generation
+      DispatchQueue.main.async { [weak self] in
+        guard let self, self.archiveSaveGeneration == generation else { return }
+        guard self.parent.richTextData != data else { return }
+        self.parent.richTextData = data
       }
     }
 
@@ -1468,6 +1626,10 @@ private struct KBInlineDocumentEditor: NSViewRepresentable {
         }
       case .alignment(let alignment):
         applyParagraphAlignment(alignment, in: range)
+      case .bulletList:
+          insertListPrefix("• ")
+      case .numberedList:
+          insertListPrefix("1. ")
       }
       // Formatting changes attributed text only. Do not rewrite the plain-text binding here:
       // doing so re-enters SwiftUI's update cycle while the command is still pending.
@@ -1495,6 +1657,14 @@ private struct KBInlineDocumentEditor: NSViewRepresentable {
       editor.typingAttributes[.font] = editor.typingAttributes[.font]
         ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
       return range
+    }
+
+    private func insertListPrefix(_ prefix: String) {
+      guard let editor else { return }
+      let selection = editor.selectedRange()
+      editor.insertText(prefix, replacementRange: NSRange(location: selection.location, length: 0))
+      parent.text = serialisedText()
+      saveArchive()
     }
 
     private func applyFont(in range: NSRange, transform: (NSFont) -> NSFont) {
@@ -1835,6 +2005,134 @@ private struct KBQuickLookPreview: View {
     } catch {
       failed = true
     }
+  }
+}
+
+
+
+private struct KBVersionSnapshot: Codable, Identifiable {
+  let id: UUID
+  let documentID: UUID
+  let title: String
+  let text: String
+  let richTextData: Data?
+  let createdAt: Date
+}
+
+private final class KBVersionStore {
+  static let shared = KBVersionStore()
+  private var url: URL { KBPersistence.support.appendingPathComponent("KnowledgeBaseVersions.json") }
+  func all(for documentID: UUID) -> [KBVersionSnapshot] {
+    guard let data = try? Data(contentsOf: url), let values = try? JSONDecoder().decode([KBVersionSnapshot].self, from: data) else { return [] }
+    return values.filter { $0.documentID == documentID }.sorted { $0.createdAt > $1.createdAt }
+  }
+  func save(document: KBDocument) {
+    var values: [KBVersionSnapshot] = []
+    if let data = try? Data(contentsOf: url) { values = (try? JSONDecoder().decode([KBVersionSnapshot].self, from: data)) ?? [] }
+    if let last = values.last(where: { $0.documentID == document.id }), last.title == document.title, last.text == document.text { return }
+    values.append(KBVersionSnapshot(id: UUID(), documentID: document.id, title: document.title, text: document.text, richTextData: document.richTextData, createdAt: Date()))
+    if values.count > 500 { values.removeFirst(values.count - 500) }
+    if let data = try? JSONEncoder().encode(values) { try? data.write(to: url, options: .atomic) }
+  }
+}
+
+private final class KBSpotlightIndexer {
+  static let shared = KBSpotlightIndexer()
+  func index(_ document: KBDocument) {
+    let attributes = CSSearchableItemAttributeSet(contentType: .text)
+    attributes.title = document.title
+    attributes.contentDescription = document.text
+    attributes.keywords = document.tags.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+    let item = CSSearchableItem(uniqueIdentifier: document.id.uuidString, domainIdentifier: "com.absdev.studio.knowledge", attributeSet: attributes)
+    CSSearchableIndex.default().indexSearchableItems([item])
+  }
+  func remove(documentID: UUID) {
+    CSSearchableIndex.default().deleteSearchableItems(withIdentifiers: [documentID.uuidString])
+  }
+}
+
+private struct KBInspector: View {
+  @Bindable var store: KBStore
+  let document: KBDocument
+  @State private var tags = ""
+  @State private var versions: [KBVersionSnapshot] = []
+  private var headings: [String] {
+    document.text.split(separator: "\n").map(String.init).filter { $0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }
+  }
+  var body: some View {
+    ScrollView {
+      VStack(alignment: .leading, spacing: 18) {
+        Label("Inspector", systemImage: "info.circle").font(.headline)
+        GroupBox("Metadata") {
+          VStack(alignment: .leading, spacing: 10) {
+            LabeledContent("Words", value: "\(document.text.split { $0.isWhitespace }.count)")
+            LabeledContent("Characters", value: "\(document.text.count)")
+            LabeledContent("Version", value: "\(document.version)")
+            LabeledContent("Updated", value: document.updatedAt.formatted(date: .abbreviated, time: .shortened))
+          }.frame(maxWidth: .infinity, alignment: .leading)
+        }
+        GroupBox("Tags") {
+          TextField("architecture, api, todo", text: $tags)
+            .textFieldStyle(.roundedBorder)
+            .onSubmit { store.updateMetadata(tags: tags) }
+        }
+        GroupBox("Outline") {
+          if headings.isEmpty { Text("No headings").foregroundStyle(.secondary) }
+          else { ForEach(headings, id: \.self) { Text($0.replacingOccurrences(of: "#", with: "").trimmingCharacters(in: .whitespaces)).lineLimit(1) } }
+        }
+        GroupBox("Attachments") {
+          if document.attachments.isEmpty { Text("No attachments").foregroundStyle(.secondary) }
+          else {
+            ForEach(Array(document.attachments).sorted { $0.name < $1.name }) { attachment in
+              HStack {
+                Image(systemName: "paperclip")
+                Text(attachment.name).lineLimit(1)
+                Spacer()
+                Button { store.download(attachment) } label: { Image(systemName: "square.and.arrow.down") }.buttonStyle(.borderless)
+              }
+            }
+          }
+        }
+        GroupBox("Version History") {
+          VStack(alignment: .leading, spacing: 8) {
+            Button("Create Snapshot") { store.createVersionSnapshot(); versions = KBVersionStore.shared.all(for: document.id) }
+            ForEach(versions.prefix(10)) { version in
+              Text(version.createdAt.formatted(date: .abbreviated, time: .shortened)).font(.caption)
+            }
+          }
+        }
+      }.padding(14)
+    }
+    .background(.bar)
+    .onAppear { tags = document.tags; versions = KBVersionStore.shared.all(for: document.id) }
+    .onChange(of: document.id) { _, _ in tags = document.tags; versions = KBVersionStore.shared.all(for: document.id) }
+  }
+}
+
+private struct KBCommandPalette: View {
+  @Bindable var store: KBStore
+  @Binding var search: String
+  @Binding var isPresented: Bool
+  var matches: [KBDocument] {
+    let all = store.documents.filter { !$0.isTrashed }
+    guard !search.isEmpty else { return Array(all.prefix(20)) }
+    return all.filter { $0.title.localizedCaseInsensitiveContains(search) || $0.text.localizedCaseInsensitiveContains(search) }
+  }
+  var body: some View {
+    VStack(spacing: 0) {
+      TextField("Jump to a document", text: $search)
+        .textFieldStyle(.plain).font(.title3).padding(16)
+      Divider()
+      List(matches) { document in
+        Button {
+          store.showingTrash = false
+          store.selection = document.id
+          isPresented = false
+        } label: {
+          HStack { Image(systemName: "doc.text"); Text(document.title); Spacer(); Text(KBPriority(rawValue: document.priority)?.name ?? "Normal").foregroundStyle(.secondary) }
+        }.buttonStyle(.plain)
+      }.listStyle(.plain)
+    }.frame(width: 560, height: 440)
   }
 }
 
