@@ -70,6 +70,7 @@ final class AppStore {
     var sailDiscoveryMessage = "Laravel Sail is not installed in this project."
     var sailInput = ""
     var projectCapabilities: [ProjectCapability] = []
+    var capabilitySnapshot: ProjectCapabilitiesSnapshot = .empty
     var isPackageOperationPresented = false
     var packageOperationTitle = "Package operation"
     var packageOperationDetail = "Preparing Composer…"
@@ -189,6 +190,7 @@ final class AppStore {
         sailVersion = "Not installed"
         sailDiscoveryMessage = "Laravel Sail is not installed in this project."
         projectCapabilities = []
+        capabilitySnapshot = .empty
         isPackageOperationPresented = false
         packageOperationTitle = "Package operation"
         packageOperationDetail = "Preparing Composer…"
@@ -244,29 +246,23 @@ final class AppStore {
     }
 
     func projectContainsAnyPackage(_ packageNames: [String]) -> Bool {
-        guard let project = selectedProject else { return false }
-        let root = URL(fileURLWithPath: project.path)
-        let candidates = ["composer.lock", "composer.json"]
-        let contents = candidates.compactMap { try? String(contentsOf: root.appendingPathComponent($0), encoding: .utf8) }.joined(separator: "\n")
-        return packageNames.contains { contents.localizedCaseInsensitiveContains("\"\($0)\"") }
+        capabilitySnapshot.hasAnyPackage(packageNames)
     }
 
     func projectContainsPackage(_ packageName: String) -> Bool {
-        projectContainsAnyPackage([packageName])
+        capabilitySnapshot.hasPackage(packageName)
     }
 
     func projectHasArtisanCommand(_ commandName: String) -> Bool {
-        artisanCommands.contains { $0.name == commandName || $0.aliases.contains(commandName) }
+        capabilitySnapshot.hasCommand(commandName)
     }
 
     func projectPathExists(_ relativePath: String) -> Bool {
-        guard let project = selectedProject else { return false }
-        return FileManager.default.fileExists(
-            atPath: URL(fileURLWithPath: project.path).appendingPathComponent(relativePath).path
-        )
+        capabilitySnapshot.hasPath(relativePath)
     }
 
     func projectDirectoryContainsFiles(_ relativePath: String) -> Bool {
+        if capabilitySnapshot.hasFiles(in: relativePath) { return true }
         guard let project = selectedProject else { return false }
         let url = URL(fileURLWithPath: project.path).appendingPathComponent(relativePath)
         guard let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: nil) else { return false }
@@ -809,8 +805,10 @@ final class AppStore {
         databaseSchemaMessage = "Schema has not been loaded yet."
         }
         guard selectedProjectID == projectID else { return }
+        rebuildCapabilitySnapshot()
         await runDiagnostics()
         guard selectedProjectID == projectID else { return }
+        rebuildCapabilitySnapshot()
         refreshProjectCapabilities()
         loadLogs()
         statusMessage = phpExecutable == nil ? "PHP executable needs attention" : "Project refreshed"
@@ -1117,6 +1115,67 @@ final class AppStore {
         isBusy = true
         statusMessage = "Terminal session running"
         commandOutput = []
+    }
+
+    func rebuildCapabilitySnapshot() {
+        guard let project = selectedProject else {
+            capabilitySnapshot = .empty
+            return
+        }
+
+        let root = URL(fileURLWithPath: project.path, isDirectory: true)
+        let packageState = composerPackageState(in: project.path)
+        let paths = [
+            "artisan", "composer.json", "composer.lock", "package.json", "vite.config.js", "vite.config.ts",
+            "phpunit.xml", "phpunit.xml.dist", "routes/api.php", "routes/channels.php",
+            "config/filesystems.php", "config/cache.php", "config/queue.php", "config/services.php",
+            "docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml", "vendor/bin/sail"
+        ]
+        let directories = [
+            "app/Models", "app/Events", "app/Listeners", "app/Mail", "app/Notifications",
+            "app/Jobs", "app/Http/Controllers", "app/Policies", "app/Observers", "database/factories",
+            "tests", "Modules", "modules", "packages"
+        ]
+        let existingPaths = Set(paths.filter { FileManager.default.fileExists(atPath: root.appendingPathComponent($0).path) })
+        let populatedDirectories = Set(directories.filter { relative in
+            let url = root.appendingPathComponent(relative, isDirectory: true)
+            guard let values = try? FileManager.default.contentsOfDirectory(atPath: url.path) else { return false }
+            return !values.isEmpty
+        })
+        let commands = Set(artisanCommands.flatMap { [$0.name] + $0.aliases })
+
+        var profiles = Set<LaravelProjectProfile>()
+        if existingPaths.contains("routes/api.php") || packageState.installed.contains("laravel/sanctum") || packageState.installed.contains("laravel/passport") { profiles.insert(.api) }
+        if packageState.installed.contains("livewire/livewire") { profiles.insert(.livewire) }
+        if packageState.installed.contains("inertiajs/inertia-laravel") { profiles.insert(.inertia) }
+        if populatedDirectories.contains("packages") || packageState.installed.contains("orchestra/testbench") { profiles.insert(.packageDevelopment) }
+        if packageState.installed.contains("filament/filament") { profiles.insert(.filament) }
+        if populatedDirectories.contains("Modules") || populatedDirectories.contains("modules") || packageState.installed.contains("nwidart/laravel-modules") || packageState.installed.contains("mpba/laravel-modules") { profiles.insert(.modules) }
+        if packageState.installed.contains("laravel/octane") || packageState.installed.contains("laravel/reverb") { profiles.insert(.microservice) }
+        if existingPaths.contains("vendor/bin/sail") || packageState.installed.contains("laravel/sail") { profiles.insert(.sail) }
+        if existingPaths.contains("docker-compose.yml") || existingPaths.contains("docker-compose.yaml") || existingPaths.contains("compose.yml") || existingPaths.contains("compose.yaml") { profiles.insert(.docker) }
+        if isServBayInstalled { profiles.insert(.servBay) }
+
+        var health: [String: CapabilityHealth] = [:]
+        health["php"] = project.phpVersion == "Unavailable" ? .problem : .ready
+        health["laravel"] = project.laravelVersion == "Unavailable" ? .problem : .ready
+        health["composer"] = existingPaths.contains("composer.lock") ? .ready : .attention
+        health["frontend"] = existingPaths.contains("package.json") ? .ready : .unavailable
+        health["database"] = diagnostics.contains(where: { $0.title.localizedCaseInsensitiveContains("database") && $0.status == .error }) ? .problem : .ready
+        health["tests"] = (existingPaths.contains("phpunit.xml") || existingPaths.contains("phpunit.xml.dist") || packageState.installed.contains("pestphp/pest")) ? .ready : .unavailable
+        health["queue"] = existingPaths.contains("config/queue.php") ? .ready : .unavailable
+        health["storage"] = existingPaths.contains("config/filesystems.php") ? .ready : .unavailable
+
+        capabilitySnapshot = ProjectCapabilitiesSnapshot(
+            scannedAt: Date(),
+            packages: packageState.installed,
+            directPackages: packageState.direct,
+            artisanCommands: commands,
+            existingPaths: existingPaths,
+            nonEmptyDirectories: populatedDirectories,
+            profiles: profiles,
+            health: health
+        )
     }
 
     func refreshProjectCapabilities() {
@@ -1980,6 +2039,9 @@ final class AppStore {
                 self.activeForegroundCommand = nil
 
                 let lines = self.commandRunOutput.removeValue(forKey: runID) ?? []
+                if status == 0 && lines.isEmpty {
+                    self.commandOutput.append("Command completed successfully with no textual output.")
+                }
                 let wasTestRun = self.testCommandRuns.remove(runID) != nil
                 if wasTestRun && status != 0 {
                     self.presentTestFailureReport(

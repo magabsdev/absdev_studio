@@ -11,6 +11,8 @@ struct DevelopmentView: View {
                     Button("Stop All", role: .destructive) { store.stopAllProcesses() }
                     Button("Start All") { store.startDefaultProcesses() }.buttonStyle(.borderedProminent)
                 }
+                CommandResultsCard()
+
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 520), spacing: 18)], spacing: 18) {
                     ForEach(store.processes.filter { process in
                         process.name != "Laravel Server" || store.shouldShowLaravelDevelopmentServer
@@ -20,6 +22,51 @@ struct DevelopmentView: View {
                 }
             }.padding(32)
         }
+    }
+}
+
+
+private struct CommandResultsCard: View {
+    @Environment(AppStore.self) private var store
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                Image(systemName: store.isBusy ? "terminal.fill" : "terminal")
+                    .font(.title2)
+                    .foregroundStyle(store.isBusy ? Color.accentColor : Color.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Command Output").font(.headline)
+                    Text(store.isBusy ? store.statusMessage : "Output from control-centre, Artisan and shell commands.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if store.isBusy {
+                    ProgressView().controlSize(.small)
+                    Button("Stop", role: .destructive) { store.cancelForegroundCommand() }
+                        .buttonStyle(.bordered)
+                }
+                Button("Clear") { store.clearConsole() }
+                    .buttonStyle(.bordered)
+                    .disabled(store.commandOutput.isEmpty)
+            }
+
+            if store.commandOutput.isEmpty {
+                ContentUnavailableView(
+                    "No command output yet",
+                    systemImage: "terminal",
+                    description: Text("Run a control-centre action to see its complete output here.")
+                )
+                .frame(maxWidth: .infinity, minHeight: 150)
+            } else {
+                ConsoleView(lines: store.commandOutput)
+                    .frame(minHeight: 220, idealHeight: 300, maxHeight: 420)
+            }
+        }
+        .padding(20)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(.separator.opacity(0.6)))
     }
 }
 

@@ -69,6 +69,7 @@ private struct ControlAction: Identifiable {
     let command: ControlCommand
     var destructive = false
     var available = true
+    var health: CapabilityHealth = .ready
 }
 
 struct LaravelControlCentreView: View {
@@ -126,10 +127,15 @@ struct LaravelControlCentreView: View {
                     Text(action.detail).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
-                Text(action.badge)
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 9).padding(.vertical, 5)
-                    .background(.quaternary, in: Capsule())
+                VStack(alignment: .trailing, spacing: 7) {
+                    Text(action.badge)
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 9).padding(.vertical, 5)
+                        .background(.quaternary, in: Capsule())
+                    Label(action.health.rawValue, systemImage: action.health.symbol)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(action.health.tint)
+                }
             }
 
             Spacer(minLength: 4)
@@ -347,7 +353,27 @@ struct LaravelControlCentreView: View {
             badge: badge,
             command: command,
             destructive: destructive,
-            available: available && installed
+            available: available && installed,
+            health: health(for: command, installed: installed, available: available)
         )
     }
+
+    private func health(for command: ControlCommand, installed: Bool, available: Bool) -> CapabilityHealth {
+        guard available, installed else { return .unavailable }
+        switch command {
+        case .artisan(let input):
+            let name = input.split(whereSeparator: \.isWhitespace).first.map(String.init) ?? ""
+            if name.hasPrefix("migrate") { return store.capabilitySnapshot.status(for: "database") }
+            if name.hasPrefix("test") || name == "dusk" { return store.capabilitySnapshot.status(for: "tests") }
+            if name.hasPrefix("queue") || name.hasPrefix("horizon") { return store.capabilitySnapshot.status(for: "queue") }
+            return .ready
+        case .shell(let input):
+            if input.contains("npm") { return store.capabilitySnapshot.status(for: "frontend") }
+            if input.contains("composer") { return store.capabilitySnapshot.status(for: "composer") }
+            return .ready
+        case .navigate:
+            return .ready
+        }
+    }
+
 }

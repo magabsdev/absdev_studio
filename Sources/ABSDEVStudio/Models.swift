@@ -267,6 +267,67 @@ struct SailCommand: Identifiable, Hashable {
 }
 
 
+enum CapabilityHealth: String, Hashable {
+    case ready = "Ready"
+    case attention = "Needs attention"
+    case problem = "Problem detected"
+    case unavailable = "Not configured"
+
+    var symbol: String {
+        switch self {
+        case .ready: "checkmark.circle.fill"
+        case .attention: "exclamationmark.triangle.fill"
+        case .problem: "xmark.octagon.fill"
+        case .unavailable: "circle.dashed"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .ready: .green
+        case .attention: .yellow
+        case .problem: .red
+        case .unavailable: .secondary
+        }
+    }
+}
+
+enum LaravelProjectProfile: String, CaseIterable, Identifiable, Hashable {
+    case api = "Laravel API"
+    case livewire = "Livewire"
+    case inertia = "Inertia"
+    case packageDevelopment = "Package Development"
+    case filament = "Filament"
+    case modules = "Modules"
+    case microservice = "Microservice"
+    case sail = "Sail"
+    case docker = "Docker"
+    case servBay = "ServBay"
+
+    var id: String { rawValue }
+}
+
+struct ProjectCapabilitiesSnapshot: Hashable {
+    var scannedAt = Date.distantPast
+    var packages: Set<String> = []
+    var directPackages: Set<String> = []
+    var artisanCommands: Set<String> = []
+    var existingPaths: Set<String> = []
+    var nonEmptyDirectories: Set<String> = []
+    var profiles: Set<LaravelProjectProfile> = []
+    var health: [String: CapabilityHealth] = [:]
+
+    static let empty = ProjectCapabilitiesSnapshot()
+
+    func hasPackage(_ name: String) -> Bool { packages.contains(name.lowercased()) }
+    func hasAnyPackage(_ names: [String]) -> Bool { names.contains { hasPackage($0) } }
+    func hasCommand(_ name: String) -> Bool { artisanCommands.contains(name) }
+    func hasPath(_ path: String) -> Bool { existingPaths.contains(path) }
+    func hasFiles(in path: String) -> Bool { nonEmptyDirectories.contains(path) }
+    func status(for key: String, fallback: CapabilityHealth = .ready) -> CapabilityHealth { health[key] ?? fallback }
+}
+
+
 struct ProjectCapability: Identifiable, Hashable {
     let name: String
     let package: String

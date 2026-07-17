@@ -36,3 +36,9 @@ Package-specific sections are hidden unless their Composer package is present. F
 ## Installed-control filtering and command output
 
 Control-centre cards are filtered against the selected project's discovered Artisan command list, Composer packages, files, and source directories. Package-specific cards are not displayed when their package is absent. Running a command now opens the Development console first so streamed and final output remains visible after the progress sheet closes.
+
+## Project capability model
+
+The selected project is now scanned into one `ProjectCapabilitiesSnapshot` after Artisan discovery. The snapshot records installed/direct Composer packages, available Artisan commands, relevant files and populated Laravel source directories, detected project profiles, and shared health states. Sidebar visibility and control-centre cards consume this snapshot rather than repeatedly parsing Composer files or rescanning the project tree.
+
+Detected profiles include Laravel API, Livewire, Inertia, package development, Filament, modules, microservice, Sail, Docker and ServBay. Control cards display Ready, Needs attention, Problem detected or Not configured status indicators.

@@ -29,6 +29,29 @@ struct OverviewView: View {
                         MetricCard(title: "Environment", value: project.environment, detail: "APP_DEBUG enabled", symbol: "slider.horizontal.3")
                     }
 
+                    if !store.capabilitySnapshot.profiles.isEmpty {
+                        GroupBox {
+                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 8)], alignment: .leading, spacing: 8) {
+                                ForEach(store.capabilitySnapshot.profiles.sorted { $0.rawValue < $1.rawValue }) { profile in
+                                    Label(profile.rawValue, systemImage: profileSymbol(profile))
+                                        .font(.caption.weight(.semibold))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 7)
+                                        .background(.quaternary, in: Capsule())
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        } label: {
+                            HStack {
+                                Text("Detected project profiles").font(.headline)
+                                Spacer()
+                                Text("Scanned once per refresh")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+
                     if containerStore.runtimeAvailable && !containerStore.containers.isEmpty {
                         ContainerResourcesCard(store: containerStore)
                     }
@@ -96,6 +119,21 @@ struct OverviewView: View {
                 await containerStore.refreshStats()
                 try? await Task.sleep(for: .seconds(2))
             }
+        }
+    }
+
+    private func profileSymbol(_ profile: LaravelProjectProfile) -> String {
+        switch profile {
+        case .api: "network"
+        case .livewire: "bolt.square.fill"
+        case .inertia: "arrow.left.arrow.right.square.fill"
+        case .packageDevelopment: "shippingbox.fill"
+        case .filament: "rectangle.3.group.fill"
+        case .modules: "square.stack.3d.up.fill"
+        case .microservice: "point.3.connected.trianglepath.dotted"
+        case .sail: "sailboat.fill"
+        case .docker: "shippingbox.and.arrow.backward.fill"
+        case .servBay: "server.rack"
         }
     }
 }
