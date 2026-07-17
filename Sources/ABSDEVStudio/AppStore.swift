@@ -60,6 +60,7 @@ final class AppStore {
     var interactiveArtisanDirectory = ""
     var interactiveArtisanEnvironment: [String] = []
     var interactiveArtisanSessionID = UUID()
+    @ObservationIgnored private var interactiveArtisanReturnSectionOnExit: AppSection?
     var sailCommands: [SailCommand] = []
     var isSailInstalled = false
     var isSailRunning = false
@@ -1042,7 +1043,7 @@ final class AppStore {
             }
         }
         clearConsole()
-        runInteractiveArtisan("tinker")
+        runInteractiveArtisan("tinker", returnSectionOnExit: .overview)
     }
 
 
@@ -1403,9 +1404,10 @@ final class AppStore {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
-    private func runInteractiveArtisan(_ command: String) {
+    private func runInteractiveArtisan(_ command: String, returnSectionOnExit: AppSection? = nil) {
         guard let project = selectedProject else { return }
         stopInteractiveArtisanSession()
+        interactiveArtisanReturnSectionOnExit = returnSectionOnExit
 
         let artisanCommand = "exec \(shellQuote(phpPath)) artisan \(command)"
         var environment = commandEnvironment()
@@ -1425,19 +1427,32 @@ final class AppStore {
     }
 
     func interactiveArtisanDidTerminate(exitCode: Int32?) {
-        // Keep the terminal mounted after the process exits so the final Artisan
-        // screen/output remains visible instead of flashing back to ConsoleView.
+        let returnSection = interactiveArtisanReturnSectionOnExit
+        interactiveArtisanReturnSectionOnExit = nil
         isInteractiveArtisanSession = false
-        isInteractiveArtisanTerminalVisible = true
         isBusy = false
+
         if let exitCode {
             statusMessage = exitCode == 0 ? "Interactive session ended" : "Interactive session failed (exit \(exitCode))"
         } else {
             statusMessage = "Interactive session ended"
         }
+
+        if let returnSection {
+            // Tinker is a temporary workspace. Once PsySH exits, unmount its PTY
+            // and return to the normal project overview rather than leaving an
+            // inactive terminal occupying the full Tinker screen.
+            isInteractiveArtisanTerminalVisible = false
+            interactiveArtisanSessionID = UUID()
+            selectedSection = returnSection
+        } else {
+            // Other interactive Artisan workspaces retain their final output.
+            isInteractiveArtisanTerminalVisible = true
+        }
     }
 
     func stopInteractiveArtisanSession() {
+        interactiveArtisanReturnSectionOnExit = nil
         isInteractiveArtisanSession = false
         isInteractiveArtisanTerminalVisible = false
         isBusy = false

@@ -786,11 +786,6 @@ struct TinkerView: View {
                     .tint(.red)
                 }
 
-                Button("Start Tinker", systemImage: "play.fill") {
-                    store.runTinker()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(store.isInteractiveArtisanSession || store.selectedProject == nil)
             }
             .padding(.horizontal, 28)
             .padding(.vertical, 22)
@@ -823,14 +818,12 @@ struct TinkerView: View {
                     .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
                     .overlay(RoundedRectangle(cornerRadius: 12).stroke(.separator))
                 } else {
-                    ContentUnavailableView {
-                        Label("Tinker is ready", systemImage: "chevron.left.forwardslash.chevron.right")
-                    } description: {
-                        Text("Start a dedicated Tinker session. The entire area becomes a real interactive terminal with history, completion, colours, and multiline output.")
-                    } actions: {
-                        Button("Start Tinker") { store.runTinker() }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(store.selectedProject == nil)
+                    VStack(spacing: 14) {
+                        ProgressView()
+                            .controlSize(.large)
+                        Text(store.selectedProject == nil ? "Select a project to use Tinker" : "Starting Tinker…")
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
@@ -841,6 +834,21 @@ struct TinkerView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(minWidth: 900, maxWidth: .infinity, minHeight: 700, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear {
+            guard store.selectedProject != nil,
+                  !store.isInteractiveArtisanTerminalVisible,
+                  !store.isInteractiveArtisanSession else { return }
+
+            // Start PsySH as soon as the dedicated Tinker workspace is opened.
+            // Dispatching to the next run-loop turn allows SwiftUI to finish
+            // mounting the terminal container before the PTY session begins.
+            DispatchQueue.main.async {
+                guard store.selectedSection == .tinker,
+                      !store.isInteractiveArtisanTerminalVisible,
+                      !store.isInteractiveArtisanSession else { return }
+                store.runTinker()
+            }
+        }
         .onDisappear {
             if store.isInteractiveArtisanSession {
                 store.stopInteractiveArtisanSession()
