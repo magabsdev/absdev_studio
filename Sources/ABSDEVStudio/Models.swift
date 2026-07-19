@@ -29,6 +29,13 @@ struct LaravelProject: Identifiable, Hashable, Codable {
     var iconSymbol: String? = nil
     var iconColorHex: String? = nil
     var customIconPath: String? = nil
+    var isFavorite: Bool? = nil
+    var tags: [String]? = nil
+    var lastOpenedAt: Date? = nil
+    var gitDirty: Bool? = nil
+
+    var favorite: Bool { isFavorite ?? false }
+    var projectTags: [String] { tags ?? [] }
 
     static let sample = LaravelProject(
         name: "PoolMate",

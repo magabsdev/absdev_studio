@@ -38,6 +38,15 @@ struct ABSDEVStudioApp: App {
             }
 
             CommandMenu("Project") {
+                Button("Rename Project…") {
+                    NotificationCenter.default.post(name: .absdevRenameSelectedProject, object: nil)
+                }
+                .keyboardShortcut(.return, modifiers: [])
+                Button("Delete Project…") {
+                    NotificationCenter.default.post(name: .absdevDeleteSelectedProject, object: nil)
+                }
+                .keyboardShortcut(.delete, modifiers: [.command])
+                Divider()
                 Button("Refresh Capabilities") { store.refreshProjectCapabilities() }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
                 Button("Quick Look Project") { store.quickLookProject() }
@@ -104,4 +113,10 @@ struct ABSDEVStudioApp: App {
         }
         .menuBarExtraStyle(.window)
     }
+}
+
+
+extension Notification.Name {
+    static let absdevRenameSelectedProject = Notification.Name("ABSDEVStudio.renameSelectedProject")
+    static let absdevDeleteSelectedProject = Notification.Name("ABSDEVStudio.deleteSelectedProject")
 }

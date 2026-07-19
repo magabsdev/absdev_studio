@@ -89,81 +89,291 @@ struct RootView: View {
 private struct SidebarView: View {
     @Environment(AppStore.self) private var store
     @State private var projectBeingCustomized: LaravelProject?
+    @State private var projectPendingRename: LaravelProject?
+    @State private var editedAlias = ""
+    @State private var projectPendingDeletion: LaravelProject?
+    @State private var moveFolderToTrash = false
+    @State private var projectForTags: LaravelProject?
+    @State private var tagText = ""
+    @State private var searchText = ""
+
+    private var filteredProjects: [LaravelProject] {
+        guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return store.projects }
+        return store.projects.filter { project in
+            project.name.localizedCaseInsensitiveContains(searchText)
+                || project.path.localizedCaseInsensitiveContains(searchText)
+                || project.branch.localizedCaseInsensitiveContains(searchText)
+                || project.projectTags.contains(where: { $0.localizedCaseInsensitiveContains(searchText) })
+        }
+    }
+
+    private var favorites: [LaravelProject] { filteredProjects.filter(\.favorite) }
+    private var regular: [LaravelProject] { filteredProjects.filter { !$0.favorite } }
+    private var recent: [LaravelProject] {
+        Array(regular.filter { $0.lastOpenedAt != nil }
+            .sorted { ($0.lastOpenedAt ?? .distantPast) > ($1.lastOpenedAt ?? .distantPast) }
+            .prefix(5))
+    }
+    private var remainingProjects: [LaravelProject] {
+        let recentIDs = Set(recent.map(\.id))
+        return regular.filter { !recentIDs.contains($0.id) }
+    }
 
     var body: some View {
         @Bindable var store = store
 
         List(selection: $store.selectedProjectID) {
-            Section("Projects") {
-                ForEach(store.projects) { project in
-                    ProjectRow(project: project)
-                        .tag(project.id)
-                        .draggable(project.id.uuidString) {
-                            ProjectRow(project: project)
-                                .padding(8)
-                                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-                        }
-                        .dropDestination(for: String.self) { items, _ in
-                            guard let rawID = items.first,
-                                  let draggedID = UUID(uuidString: rawID) else { return false }
-                            store.moveProject(draggedID, before: project.id)
-                            return true
-                        }
-                        .contextMenu {
-                            Button("Customize Project Icon…", systemImage: "paintpalette.fill") {
-                                projectBeingCustomized = project
-                            }
-                            Button("Import SVG or Image…", systemImage: "photo.badge.plus") {
-                                store.importProjectIcon(projectID: project.id)
-                            }
-                            Divider()
-                            Button("Reset Project Icon", systemImage: "arrow.counterclockwise") {
-                                store.resetProjectIcon(projectID: project.id)
-                            }
-                        }
-                }
+            if !favorites.isEmpty {
+                Section("Favourites") { projectRows(favorites) }
+            }
+            if !recent.isEmpty {
+                Section("Recent") { projectRows(recent) }
+            }
+            if !remainingProjects.isEmpty || (favorites.isEmpty && recent.isEmpty) {
+                Section("Projects") { projectRows(remainingProjects) }
             }
         }
         .listStyle(.sidebar)
-        .sheet(item: $projectBeingCustomized) { project in
-            ProjectIconEditor(project: project)
+        .searchable(text: $searchText, placement: .sidebar, prompt: "Search projects")
+        .onReceive(NotificationCenter.default.publisher(for: .absdevRenameSelectedProject)) { _ in
+            if let project = store.selectedProject { beginRename(project) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .absdevDeleteSelectedProject)) { _ in
+            if let project = store.selectedProject { moveFolderToTrash = false; projectPendingDeletion = project }
+        }
+        .dropDestination(for: URL.self) { urls, _ in
+            var imported = false
+            for url in urls where url.hasDirectoryPath {
+                imported = store.addProject(at: url) || imported
+            }
+            return imported
+        }
+        .sheet(item: $projectPendingRename) { project in
+            ProjectAliasRenameSheet(
+                project: project,
+                alias: $editedAlias,
+                onCancel: { projectPendingRename = nil },
+                onSave: {
+                    if let error = store.renameProject(project.id, to: editedAlias) {
+                        store.showAlert(title: "Could not rename project alias", message: error)
+                    } else {
+                        projectPendingRename = nil
+                    }
+                }
+            )
+        }
+        .sheet(item: $projectBeingCustomized) { project in ProjectIconEditor(project: project) }
+        .sheet(item: $projectForTags) { project in
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Project Tags").font(.title2.bold())
+                Text("Enter comma-separated tags for \(project.name).")
+                    .foregroundStyle(.secondary)
+                TextField("Laravel, Client, Production", text: $tagText)
+                HStack {
+                    Spacer()
+                    Button("Cancel") { projectForTags = nil }
+                    Button("Save") {
+                        store.setProjectTags(project.id, tags: tagText.split(separator: ",").map(String.init))
+                        projectForTags = nil
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+            .padding(24)
+            .frame(width: 430)
+        }
+        .sheet(item: $projectPendingDeletion) { project in
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(spacing: 14) {
+                    Image(systemName: "trash.fill")
+                        .font(.system(size: 30))
+                        .foregroundStyle(.red)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Delete Project?").font(.title2.bold())
+                        Text(project.name).foregroundStyle(.secondary)
+                    }
+                }
+                Text("This removes the project from ABSDEV Studio, including its settings, MCP registration, cached icon, and knowledge-base data.")
+                    .fixedSize(horizontal: false, vertical: true)
+                Toggle("Also move the source folder to Trash", isOn: $moveFolderToTrash)
+                    .toggleStyle(.checkbox)
+                Text(moveFolderToTrash ? "The source folder will be moved to the macOS Trash." : "The source files on disk will remain untouched.")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Spacer()
+                    Button("Cancel") {
+                        projectPendingDeletion = nil
+                        moveFolderToTrash = false
+                    }
+                    Button("Delete", role: .destructive) {
+                        if let error = store.removeProject(project.id, moveFolderToTrash: moveFolderToTrash) {
+                            store.showAlert(title: "Could not delete project", message: error)
+                        }
+                        projectPendingDeletion = nil
+                        moveFolderToTrash = false
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                }
+            }
+            .padding(24)
+            .frame(width: 480)
+            .interactiveDismissDisabled()
         }
         .safeAreaInset(edge: .bottom) {
-            HStack {
-                Button {
-                    store.addProject()
-                } label: {
-                    Label("Add Project", systemImage: "plus.circle.fill")
+            VStack(spacing: 8) {
+                HStack {
+                    Button { store.addProject() } label: { Label("Add Project", systemImage: "plus.circle.fill") }
+                        .buttonStyle(.plain)
+                    Spacer()
+                    Button {
+                        if let project = store.selectedProject { projectPendingDeletion = project }
+                    } label: {
+                        Image(systemName: "minus.circle.fill").symbolRenderingMode(.hierarchical).foregroundStyle(.red)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(store.selectedProject == nil)
                 }
-                .buttonStyle(.plain)
-                Spacer()
-                Button {
-                    store.removeSelectedProject()
-                } label: {
-                    Image(systemName: "minus.circle.fill")
-                    .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(.red)
-                }
-                .buttonStyle(.plain)
-                .disabled(store.selectedProject == nil)
             }
             .padding(12)
             .background(.bar)
         }
     }
+
+    @ViewBuilder
+    private func projectRows(_ projects: [LaravelProject]) -> some View {
+        ForEach(projects) { project in
+            ProjectRow(project: project, isMCPConfigured: isMCPConfigured(project))
+                .onTapGesture(count: 2) { beginRename(project) }
+                .tag(project.id)
+            .draggable(project.id.uuidString) {
+                ProjectRow(project: project, isMCPConfigured: isMCPConfigured(project))
+                    .padding(8).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+            }
+            .dropDestination(for: String.self) { items, _ in
+                guard let rawID = items.first, let draggedID = UUID(uuidString: rawID) else { return false }
+                store.moveProject(draggedID, before: project.id); return true
+            }
+            .contextMenu { projectMenu(project) }
+        }
+    }
+
+    @ViewBuilder
+    private func projectMenu(_ project: LaravelProject) -> some View {
+        Button("Open") { store.selectedProjectID = project.id }
+        Button("Open in Finder", systemImage: "folder") {
+            store.selectedProjectID = project.id; store.revealInFinder()
+        }
+        Button("Copy Path", systemImage: "doc.on.doc") {
+            NSPasteboard.general.clearContents(); NSPasteboard.general.setString(project.path, forType: .string)
+        }
+        Divider()
+        Button("Rename…", systemImage: "pencil") { beginRename(project) }
+        Button(project.favorite ? "Remove from Favourites" : "Add to Favourites", systemImage: project.favorite ? "star.slash" : "star") {
+            store.setProjectFavorite(project.id, favorite: !project.favorite)
+        }
+        Button("Edit Tags…", systemImage: "tag") {
+            tagText = project.projectTags.joined(separator: ", "); projectForTags = project
+        }
+        Button("Duplicate Metadata", systemImage: "plus.square.on.square") { store.duplicateProject(project.id) }
+        Button("Export Settings…", systemImage: "square.and.arrow.up") { store.exportProjectMetadata(project.id) }
+        Divider()
+        Button("Customize Project Icon…", systemImage: "paintpalette.fill") { projectBeingCustomized = project }
+        Button("Import SVG or Image…", systemImage: "photo.badge.plus") { store.importProjectIcon(projectID: project.id) }
+        Button("Reset Project Icon", systemImage: "arrow.counterclockwise") { store.resetProjectIcon(projectID: project.id) }
+        Divider()
+        Button("Delete…", systemImage: "trash", role: .destructive) {
+            moveFolderToTrash = false; projectPendingDeletion = project
+        }
+    }
+
+    private func beginRename(_ project: LaravelProject) {
+        store.selectedProjectID = project.id
+        editedAlias = project.name
+        projectPendingRename = project
+    }
+
+    private func isMCPConfigured(_ project: LaravelProject) -> Bool {
+        store.openWebUI.mcp.embeddedServer.projects.contains { $0.rootPath == project.path && $0.enabled }
+    }
+}
+
+private struct ProjectAliasRenameSheet: View {
+    let project: LaravelProject
+    @Binding var alias: String
+    let onCancel: () -> Void
+    let onSave: () -> Void
+    @FocusState private var aliasIsFocused: Bool
+
+    private var folderName: String {
+        URL(fileURLWithPath: project.path).lastPathComponent
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("Rename Project Alias")
+                .font(.title2.bold())
+
+            Text("Change the name displayed in ABSDEV Studio. The project folder will not be renamed or moved.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Display alias")
+                    .font(.headline)
+                TextField("Project alias", text: $alias)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($aliasIsFocused)
+                    .onSubmit(onSave)
+            }
+
+            LabeledContent("Folder", value: folderName)
+            LabeledContent("Path", value: project.path)
+                .lineLimit(1)
+                .truncationMode(.middle)
+
+            HStack {
+                Spacer()
+                Button("Cancel", action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                Button("Save Alias", action: onSave)
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(alias.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(width: 520)
+        .onAppear {
+            aliasIsFocused = true
+        }
+        .interactiveDismissDisabled()
+    }
 }
 
 private struct ProjectRow: View {
     let project: LaravelProject
+    let isMCPConfigured: Bool
 
     var body: some View {
         HStack(spacing: 10) {
             ProjectIconView(project: project, size: 34)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(project.name).fontWeight(.semibold)
-                Text(project.branch)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 5) {
+                    Text(project.name).fontWeight(.semibold).lineLimit(1)
+                    if project.favorite { Image(systemName: "star.fill").font(.caption2).foregroundStyle(.yellow) }
+                }
+                HStack(spacing: 5) {
+                    Circle().frame(width: 6, height: 6)
+                        .foregroundStyle(project.gitDirty == true ? .orange : .green)
+                    Text(project.branch).lineLimit(1)
+                    if isMCPConfigured { Image(systemName: "point.3.connected.trianglepath.dotted").help("Available through MCP") }
+                }
+                .font(.caption).foregroundStyle(.secondary)
+                if !project.projectTags.isEmpty {
+                    Text(project.projectTags.prefix(3).joined(separator: " · "))
+                        .font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
+                }
             }
         }
         .padding(.vertical, 3)

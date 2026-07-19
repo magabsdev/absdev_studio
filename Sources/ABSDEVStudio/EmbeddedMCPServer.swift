@@ -163,6 +163,29 @@ final class EmbeddedMCPServerController {
         reloadProjects()
     }
 
+    func removeProject(named name: String) {
+        let id = Self.slug(name)
+        do {
+            try projectStore.remove(id: id)
+            reloadProjects()
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
+    func renameProject(from oldName: String, to newName: String, rootPath: String) {
+        removeProject(named: oldName)
+        let definition = MCPProjectDefinition(
+            id: Self.slug(newName),
+            name: newName,
+            rootPath: rootPath,
+            projectType: "laravel",
+            projectDescription: "Laravel project managed by ABSDEV Studio"
+        )
+        do { try projectStore.save(definition) } catch { lastError = error.localizedDescription }
+        reloadProjects()
+    }
+
     func openProjectsDirectory() {
         try? FileManager.default.createDirectory(at: projectsDirectory, withIntermediateDirectories: true)
         NSWorkspace.shared.open(projectsDirectory)
@@ -311,6 +334,11 @@ private struct MCPProjectDefinitionStore {
                 return try JSONDecoder().decode(MCPProjectDefinition.self, from: data)
             }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    func remove(id: String) throws {
+        let url = directory.appendingPathComponent("\(id).json")
+        if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
     }
 
     func save(_ definition: MCPProjectDefinition) throws {
