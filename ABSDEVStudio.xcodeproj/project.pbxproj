@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A0B1C2D3E4F5061728394A5B /* OverviewPerformanceCounters.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0C1D2E3F405162738495A6B /* OverviewPerformanceCounters.swift */; };
+		DADADA000000000000000001 /* AIKnowledgeContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = DADADA000000000000000002 /* AIKnowledgeContext.swift */; };
+		A1A1A1A1A1A1A1A1A1A1A1A1 /* AIProviderFramework.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1B1B1B1B1B1B1B1B1B1B1B1 /* AIProviderFramework.swift */; };
 		F10000000000000000000001 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = F10000000000000000000002 /* SwiftTerm */; };
 		B10000000000000000000002 /* BrandViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* BrandViews.swift */; };
 		KB0000010000000000000001 /* KnowledgeBase.swift in Sources */ = {isa = PBXBuildFile; fileRef = KB0000020000000000000001 /* KnowledgeBase.swift */; };
@@ -31,6 +34,9 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		B0C1D2E3F405162738495A6B /* OverviewPerformanceCounters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewPerformanceCounters.swift; sourceTree = "<group>"; };
+		DADADA000000000000000002 /* AIKnowledgeContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIKnowledgeContext.swift; sourceTree = "<group>"; };
+		B1B1B1B1B1B1B1B1B1B1B1B1 /* AIProviderFramework.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIProviderFramework.swift; sourceTree = "<group>"; };
 		B10000000000000000000001 /* BrandViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrandViews.swift; sourceTree = "<group>"; };
 		KB0000020000000000000001 /* KnowledgeBase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KnowledgeBase.swift; sourceTree = "<group>"; };
 		B10000000000000000000003 /* ABSDEVStudioDocument.icns */ = {isa = PBXFileReference; lastKnownFileType = image.icns; path = ABSDEVStudioDocument.icns; sourceTree = "<group>"; };
@@ -100,10 +106,13 @@
 				A4491ACF097D667B51A7CD6F /* MoreFeatureViews.swift */,
 				B1C2D3E4F5061728394A5B6C /* LaravelControlCentreViews.swift */,
 				8A0C02CAA52394519140A4FA /* OverviewView.swift */,
+				B0C1D2E3F405162738495A6B /* OverviewPerformanceCounters.swift */,
 				A7E7393E9EFBFE23C0522857 /* RootView.swift */,
 				F557E7613C522594926CEB0D /* SettingsView.swift */,
 				E1F2A3B4C5D60718293A4B5C /* OpenWebUI.swift */,
 				C0FFEE000000000000000002 /* LMStudio.swift */,
+				B1B1B1B1B1B1B1B1B1B1B1B1 /* AIProviderFramework.swift */,
+				DADADA000000000000000002 /* AIKnowledgeContext.swift */,
 				B8C9D0E1F203142536475869 /* MCP.swift */,
 				867D8A179010B63034C1EDCF /* SharedViews.swift */,
 			);
@@ -210,10 +219,13 @@
 				6F2C430116C28F071737F360 /* MoreFeatureViews.swift in Sources */,
 				A1B2C3D4E5F60718293A4B5C /* LaravelControlCentreViews.swift in Sources */,
 				ADF0DAAB2D97FFE01582AB87 /* OverviewView.swift in Sources */,
+				A0B1C2D3E4F5061728394A5B /* OverviewPerformanceCounters.swift in Sources */,
 				D07D33E6EB9F55B36B8D3605 /* RootView.swift in Sources */,
 				EF8431AC2777E551414F7BB6 /* SettingsView.swift in Sources */,
 				D1E2F3A4B5C60718293A4B5C /* OpenWebUI.swift in Sources */,
 				C0FFEE000000000000000001 /* LMStudio.swift in Sources */,
+				A1A1A1A1A1A1A1A1A1A1A1A1 /* AIProviderFramework.swift in Sources */,
+				DADADA000000000000000001 /* AIKnowledgeContext.swift in Sources */,
 				A7B8C9D0E1F2031425364758 /* MCP.swift in Sources */,
 				54868FD03BCB032E4C153D5F /* SharedViews.swift in Sources */,
 			);

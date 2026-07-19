@@ -307,18 +307,51 @@ final class OpenWebUIController {
 
     private func requestMessages() -> [[String: String]] {
         var result: [[String: String]] = []
+
         let prompt = systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let userQuery = messages.last(where: { $0.role == .user })?.content ?? ""
+
+        let knowledge = activeProject.map {
+            AIKnowledgeContext.shared.context(
+                projectID: $0.id,
+                query: userQuery
+            )
+        } ?? ""
+
         var contextParts: [String] = []
-        if let project = activeProject {
-            contextParts.append("Current Laravel project: \(project.name) at \(project.path). Laravel \(project.laravelVersion), PHP \(project.phpVersion), branch \(project.branch), environment \(project.environment).")
+
+        if !prompt.isEmpty {
+            contextParts.append(prompt)
         }
-        let mcpSummary = mcp.contextSummary()
-        if !mcpSummary.isEmpty { contextParts.append(mcpSummary) }
-        let combinedSystemPrompt = ([prompt] + contextParts).filter { !$0.isEmpty }.joined(separator: "\n\n")
-        if !combinedSystemPrompt.isEmpty { result.append(["role": "system", "content": combinedSystemPrompt]) }
+
+    
+        if !knowledge.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            contextParts.append(knowledge)
+        }
+
+        let combinedSystemPrompt = contextParts.joined(separator: "\n\n")
+
+        if !combinedSystemPrompt.isEmpty {
+            result.append([
+                "role": "system",
+                "content": combinedSystemPrompt
+            ])
+        }
+
         result += messages
-            .filter { !$0.content.isEmpty }
-            .map { ["role": $0.role.rawValue, "content": $0.content] }
+            .filter {
+                $0.role != .system &&
+                !$0.content.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                ).isEmpty
+            }
+            .map {
+                [
+                    "role": $0.role.rawValue,
+                    "content": $0.content
+                ]
+            }
+
         return result
     }
 

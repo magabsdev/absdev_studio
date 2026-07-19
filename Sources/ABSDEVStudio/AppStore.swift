@@ -8,8 +8,9 @@ import SwiftUI
 @MainActor
 @Observable
 final class AppStore {
-    var openWebUI = OpenWebUIController()
-    var lmStudio = LMStudioController()
+    var openWebUI: OpenWebUIController
+    var lmStudio: LMStudioController
+    var aiProviders: AIProviderRegistry
     var projects: [LaravelProject] = []
     var selectedProjectID: LaravelProject.ID? {
         didSet {
@@ -112,6 +113,17 @@ final class AppStore {
     var terminal: String {
         didSet { UserDefaults.standard.set(terminal, forKey: "terminal") }
     }
+    var aiFeaturesEnabled: Bool {
+        didSet {
+            defaults.set(aiFeaturesEnabled, forKey: "aiFeaturesEnabled")
+            guard !aiFeaturesEnabled else { return }
+            openWebUI.cancelGeneration()
+            lmStudio.cancelGeneration()
+            if selectedSection == .aiWorkspace || selectedSection == .openWebUI || selectedSection == .lmStudio || selectedSection == .mcp {
+                selectedSection = .overview
+            }
+        }
+    }
 
     @ObservationIgnored private var runningProcesses: [UUID: Process] = [:]
     @ObservationIgnored private var activeForegroundCommand: Process?
@@ -129,6 +141,11 @@ final class AppStore {
         performsStartupDiscovery: Bool = true,
         defaults: UserDefaults = .standard
     ) {
+        let openWebUI = OpenWebUIController()
+        let lmStudio = LMStudioController()
+        self.openWebUI = openWebUI
+        self.lmStudio = lmStudio
+        self.aiProviders = AIProviderRegistry(lmStudio: lmStudio, openWebUI: openWebUI)
         self.projectsStorageURL = projectsStorageURL
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("ABSDEVStudio/projects.json")
@@ -142,6 +159,7 @@ final class AppStore {
         phpPath = defaults.string(forKey: "phpPath") ?? ""
         editor = defaults.string(forKey: "editor") ?? "Xcode"
         terminal = defaults.string(forKey: "terminal") ?? "Terminal"
+        aiFeaturesEnabled = defaults.object(forKey: "aiFeaturesEnabled") as? Bool ?? false
 
         if performsStartupDiscovery {
             detectServBay()
@@ -230,7 +248,9 @@ final class AppStore {
             case .realtime: projectContainsAnyPackage(["laravel/reverb"])
             case .observability: projectContainsAnyPackage(["laravel/pulse", "laravel/telescope", "laravel/horizon", "laravel/octane", "barryvdh/laravel-debugbar"])
             case .featureFlags: projectContainsAnyPackage(["laravel/pennant"])
-            case .aiInspector: projectContainsAnyPackage(["laravel/ai"])
+            case .aiInspector: aiFeaturesEnabled && projectContainsAnyPackage(["laravel/ai"])
+            case .aiWorkspace, .mcp: aiFeaturesEnabled
+            case .openWebUI, .lmStudio: false
             case .frontend: projectPathExists("package.json")
             case .events: projectHasArtisanCommand("event:list") || projectDirectoryContainsFiles("app/Events") || projectDirectoryContainsFiles("app/Listeners")
             case .models: projectHasArtisanCommand("model:show") || projectDirectoryContainsFiles("app/Models")

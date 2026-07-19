@@ -854,7 +854,7 @@ private struct KBWorkspace: View {
   @State private var selectedFontSize: Double = 14
   @State private var selectedTextColor = Color.white
   @State private var selectedHighlightColor = Color.clear
-  @State private var inspectorVisible = true
+  @State private var inspectorVisible = false
   @State private var commandPaletteVisible = false
   @State private var paletteSearch = ""
 

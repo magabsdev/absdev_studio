@@ -79,6 +79,7 @@ enum AppSection: String, CaseIterable, Identifiable {
     case apiCentre = "API Centre"
     case mailPreview = "Mail & Notifications"
     case aiInspector = "Laravel AI"
+    case aiWorkspace = "AI Workspace"
     case openWebUI = "Open WebUI"
     case lmStudio = "LM Studio"
     case mcp = "MCP Tools"
@@ -124,6 +125,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .apiCentre: "network"
         case .mailPreview: "envelope.badge.fill"
         case .aiInspector: "brain.head.profile.fill"
+        case .aiWorkspace: "sparkles"
         case .openWebUI: "bubble.left.and.bubble.right.fill"
         case .lmStudio: "cpu.fill"
         case .mcp: "point.3.connected.trianglepath.dotted"
@@ -169,6 +171,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .apiCentre: .indigo
         case .mailPreview: .blue
         case .aiInspector: .pink
+        case .aiWorkspace: .purple
         case .openWebUI: .purple
         case .lmStudio: .orange
         case .mcp: .indigo

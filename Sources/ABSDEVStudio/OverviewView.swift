@@ -29,6 +29,9 @@ struct OverviewView: View {
                         MetricCard(title: "Environment", value: project.environment, detail: "APP_DEBUG enabled", symbol: "slider.horizontal.3")
                     }
 
+
+                    OverviewPerformanceCounters()
+
                     if !store.capabilitySnapshot.profiles.isEmpty {
                         GroupBox {
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 8)], alignment: .leading, spacing: 8) {

@@ -48,45 +48,28 @@ struct ABSDEVStudioApp: App {
                     .keyboardShortcut("c", modifiers: [.command, .option])
             }
 
-            CommandMenu("LM Studio") {
-                Button("Open LM Studio Workspace") { store.selectedSection = .lmStudio }
-                    .keyboardShortcut("l", modifiers: [.command, .shift])
-                Button("New Local Chat") {
-                    store.lmStudio.newChat()
-                    store.selectedSection = .lmStudio
+            if store.aiFeaturesEnabled {
+                CommandMenu("AI") {
+                    Button("Open AI Workspace") { store.selectedSection = .aiWorkspace }
+                        .keyboardShortcut("a", modifiers: [.command, .shift])
+                    Button("New Conversation") {
+                        store.aiProviders.newConversation()
+                        store.selectedSection = .aiWorkspace
+                    }
+                        .keyboardShortcut("n", modifiers: [.command, .option])
+                    Divider()
+                    Button("Refresh Models") { Task { await store.aiProviders.refreshModels() } }
+                        .disabled(store.aiProviders.adapter(for: store.aiProviders.selectedProvider)?.isConfigured != true)
+                    Button("Stop Generation") { store.aiProviders.stop() }
+                        .disabled(store.aiProviders.adapter(for: store.aiProviders.selectedProvider)?.isBusy != true)
+                    Divider()
+                    Button("Open MCP Tools") { store.selectedSection = .mcp }
+                        .keyboardShortcut("m", modifiers: [.command, .shift])
+                    Button("Refresh MCP Tools") { Task { await store.openWebUI.mcp.refreshAll() } }
+                        .disabled(store.openWebUI.mcp.servers.isEmpty)
+                    Divider()
+                    SettingsLink { Text("AI Provider Settings…") }
                 }
-                Divider()
-                Button("Open LM Studio Application") { store.lmStudio.openApplication() }
-                Button("Refresh Local Models") { Task { await store.lmStudio.loadModels() } }
-                    .disabled(!store.lmStudio.configured)
-                Button("Stop Generation") { store.lmStudio.cancelGeneration() }
-                    .disabled(!store.lmStudio.isSending)
-                Divider()
-                SettingsLink { Text("LM Studio Settings…") }
-            }
-
-            CommandMenu("Open WebUI") {
-                Button("Open Open WebUI") { store.selectedSection = .openWebUI }
-                    .keyboardShortcut("a", modifiers: [.command, .shift])
-                Button("New Chat") {
-                    store.openWebUI.newChat()
-                    store.selectedSection = .openWebUI
-                }
-                    .keyboardShortcut("n", modifiers: [.command, .option])
-                Divider()
-                Button("Refresh Models") {
-                    Task { await store.openWebUI.loadModels() }
-                }
-                .disabled(!store.openWebUI.configured)
-                Button("Stop Generation") { store.openWebUI.cancelGeneration() }
-                    .disabled(!store.openWebUI.isSending)
-                Divider()
-                Button("Open MCP Tools") { store.selectedSection = .mcp }
-                    .keyboardShortcut("m", modifiers: [.command, .shift])
-                Button("Refresh MCP Tools") { Task { await store.openWebUI.mcp.refreshAll() } }
-                    .disabled(store.openWebUI.mcp.servers.isEmpty)
-                Divider()
-                SettingsLink { Text("Open WebUI & MCP Settings…") }
             }
 
             CommandMenu("Laravel") {

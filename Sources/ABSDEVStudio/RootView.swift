@@ -417,6 +417,7 @@ private struct DetailRouter: View {
         case .apiCentre: LaravelControlCentreView(kind: .apiCentre)
         case .mailPreview: LaravelControlCentreView(kind: .mailPreview)
         case .aiInspector: LaravelControlCentreView(kind: .aiInspector)
+        case .aiWorkspace: AIWorkspaceView()
         case .openWebUI: OpenWebUIView()
         case .lmStudio: LMStudioView()
         case .mcp: MCPWorkspaceView()
