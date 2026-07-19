@@ -37,6 +37,7 @@ struct MCPServerStatus: Hashable {
 @MainActor
 @Observable
 final class MCPController {
+    var embeddedServer = EmbeddedMCPServerController()
     var servers: [MCPServerConfiguration] {
         didSet { persistServers() }
     }
@@ -60,6 +61,10 @@ final class MCPController {
             servers = decoded
         } else {
             servers = []
+        }
+        if !servers.contains(where: { $0.url == "http://127.0.0.1:8765/mcp" }) {
+            servers.insert(MCPServerConfiguration(name: "ABSDEV Studio Embedded MCP", url: "http://127.0.0.1:8765/mcp"), at: 0)
+            persistServers()
         }
     }
 
@@ -431,9 +436,13 @@ struct MCPSettingsView: View {
         @Bindable var mcp = store.openWebUI.mcp
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                EmbeddedMCPServerSettingsCard()
+
+                Divider()
+
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("MCP Servers").font(.title3.bold())
+                        Text("External MCP Servers").font(.title3.bold())
                         Text("Connect trusted Streamable HTTP Model Context Protocol servers. Credentials are stored in the macOS Keychain.").foregroundStyle(.secondary)
                     }
                     Spacer()
@@ -461,6 +470,69 @@ struct MCPSettingsView: View {
             }
             .padding(32)
         }
+    }
+}
+
+
+private struct EmbeddedMCPServerSettingsCard: View {
+    @Environment(AppStore.self) private var store
+
+    var body: some View {
+        @Bindable var server = store.openWebUI.mcp.embeddedServer
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("ABSDEV Studio MCP Server", systemImage: "server.rack")
+                        .font(.title3.bold())
+                    Text("Runs inside ABSDEV Studio and serves projects defined by separate JSON files.")
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Label(server.isRunning ? "Running" : "Stopped", systemImage: server.isRunning ? "checkmark.circle.fill" : "stop.circle")
+                    .foregroundStyle(server.isRunning ? .green : .secondary)
+            }
+
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 12) {
+                GridRow {
+                    Text("Endpoint").frame(width: 110, alignment: .leading)
+                    Text(server.endpoint).font(.system(.body, design: .monospaced)).textSelection(.enabled)
+                    Button("Copy", systemImage: "doc.on.doc") { server.copyEndpoint() }
+                }
+                GridRow {
+                    Text("Port").frame(width: 110, alignment: .leading)
+                    TextField("8765", value: $server.port, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 120)
+                        .disabled(server.isRunning)
+                }
+                GridRow {
+                    Text("Projects").frame(width: 110, alignment: .leading)
+                    Text("\(server.projects.count) JSON definitions")
+                    Button("Open Folder", systemImage: "folder") { server.openProjectsDirectory() }
+                }
+            }
+
+            Toggle("Start the embedded MCP server automatically with ABSDEV Studio", isOn: $server.startsAutomatically)
+
+            HStack {
+                Text(server.status).font(.caption).foregroundStyle(.secondary)
+                if let error = server.lastError { Text(error).font(.caption).foregroundStyle(.red).lineLimit(2) }
+                Spacer()
+                Button("Reload JSON", systemImage: "arrow.clockwise") { server.reloadProjects() }
+                Button("Create JSON for Studio Projects", systemImage: "plus.square.on.square") {
+                    server.importProjects(store.projects)
+                }
+                Button(server.isRunning ? "Restart" : "Start", systemImage: server.isRunning ? "arrow.clockwise" : "play.fill") {
+                    server.isRunning ? server.restart() : server.start()
+                }
+                if server.isRunning {
+                    Button("Stop", systemImage: "stop.fill", role: .destructive) { server.stop() }
+                }
+            }
+        }
+        .padding(18)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(.separator.opacity(0.7)))
     }
 }
 

@@ -318,6 +318,10 @@ final class OpenWebUIController {
             )
         } ?? ""
 
+        let projectSource = activeProject.map {
+            AIKnowledgeContext.shared.sourceContext(project: $0, query: userQuery)
+        } ?? ""
+
         var contextParts: [String] = []
 
         if !prompt.isEmpty {
@@ -325,6 +329,10 @@ final class OpenWebUIController {
         }
 
     
+        if !projectSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            contextParts.append(projectSource)
+        }
+
         if !knowledge.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             contextParts.append(knowledge)
         }

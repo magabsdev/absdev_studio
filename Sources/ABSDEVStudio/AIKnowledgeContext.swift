@@ -114,6 +114,90 @@ final class AIKnowledgeContext {
         """
     }
 
+
+
+    func sourceContext(project: LaravelProject, query: String) -> String {
+        let rootURL = URL(fileURLWithPath: project.path, isDirectory: true).standardizedFileURL
+        guard FileManager.default.fileExists(atPath: rootURL.path) else { return "" }
+
+        let terms = Self.searchTerms(query)
+        let priorityNames: Set<String> = [
+            "composer.json", "package.json", "vite.config.js", "vite.config.ts",
+            "routes/web.php", "routes/api.php", "bootstrap/app.php", "config/app.php",
+            "Package.swift", "README.md"
+        ]
+        let allowedExtensions: Set<String> = [
+            "php", "blade.php", "swift", "py", "js", "ts", "tsx", "jsx", "vue",
+            "json", "md", "yml", "yaml", "xml", "css", "scss", "html", "sql"
+        ]
+        let excludedComponents: Set<String> = [
+            ".git", ".build", "DerivedData", "node_modules", "vendor", "storage",
+            "bootstrap/cache", "public/build", ".idea", ".vscode", "xcuserdata"
+        ]
+        let excludedNames: Set<String> = [".env", ".env.local", ".env.production"]
+
+        guard let enumerator = FileManager.default.enumerator(
+            at: rootURL,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else { return "" }
+
+        var candidates: [(url: URL, relative: String, score: Int)] = []
+        var visited = 0
+        for case let fileURL as URL in enumerator {
+            if visited >= 3_000 { break }
+            visited += 1
+
+            let relative = fileURL.path.replacingOccurrences(of: rootURL.path + "/", with: "")
+            let components = relative.split(separator: "/").map(String.init)
+            if components.contains(where: { excludedComponents.contains($0) }) {
+                if (try? fileURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
+                    enumerator.skipDescendants()
+                }
+                continue
+            }
+            if excludedNames.contains(fileURL.lastPathComponent) || fileURL.lastPathComponent.hasPrefix(".env.") { continue }
+            guard (try? fileURL.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
+            let size = (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            guard size > 0 && size <= 512_000 else { continue }
+
+            let lower = relative.lowercased()
+            let extAllowed = allowedExtensions.contains(fileURL.pathExtension.lowercased()) || lower.hasSuffix(".blade.php")
+            guard extAllowed || priorityNames.contains(relative) else { continue }
+
+            var score = priorityNames.contains(relative) ? 20 : 0
+            for term in terms where lower.contains(term) { score += 8 }
+            if lower.contains("test") || lower.contains("spec") { score += 1 }
+            if score > 0 || terms.isEmpty { candidates.append((fileURL, relative, score)) }
+        }
+
+        candidates.sort {
+            if $0.score != $1.score { return $0.score > $1.score }
+            return $0.relative.localizedCaseInsensitiveCompare($1.relative) == .orderedAscending
+        }
+
+        var remaining = min(maximumCharacters, 24_000)
+        var sections: [String] = []
+        for candidate in candidates.prefix(12) {
+            guard remaining > 400, let text = try? String(contentsOf: candidate.url, encoding: .utf8) else { continue }
+            let excerpt = Self.relevantExcerpt(text, terms: terms, limit: min(4_000, remaining - 160))
+            guard !excerpt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            let section = "### Source file: \(candidate.relative)\n```\n\(excerpt)\n```"
+            sections.append(section)
+            remaining -= section.count
+        }
+
+        guard !sections.isEmpty else { return "" }
+        return """
+        The active project is available directly on this Mac. Use these relevant local source files as read-only context. The embedded MCP server is not required for access to the active project. Do not claim that MCP is required.
+
+        Project: \(project.name)
+        Root: \(project.path)
+
+        \(sections.joined(separator: "\n\n---\n\n"))
+        """
+    }
+
     private func save(projectID: UUID, url: URL, text: String) throws {
         let context = KBPersistence.shared.container.viewContext
         let request = NSFetchRequest<KBDocument>(entityName: "KBDocument")

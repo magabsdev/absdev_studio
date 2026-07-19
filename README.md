@@ -58,3 +58,16 @@ The Artisan workspace scans the currently selected Laravel project with `artisan
 ## Terminal fonts
 
 The embedded terminal automatically prefers installed Nerd Font variants (including MesloLGS NF, JetBrains Mono Nerd Font, Caskaydia Cove Nerd Font, Hack Nerd Font and FiraCode Nerd Font) so Powerline and shell-prompt glyphs render correctly. It falls back to Menlo when no compatible Nerd Font is installed.
+
+## Embedded MCP Server
+
+ABSDEV Studio includes a local Streamable HTTP MCP server at `http://127.0.0.1:8765/mcp`.
+It runs inside the macOS application and can be controlled from **Settings → MCP**.
+
+Project definitions are stored as separate JSON files in:
+
+```text
+~/Library/Application Support/ABSDEVStudio/MCPProjects/
+```
+
+Use **Create JSON for Studio Projects** to generate definitions for projects already registered in ABSDEV Studio, or edit the JSON files manually. Each definition controls its project root, include/exclude rules, enabled state and read/search/list permissions. The server binds to localhost only and rejects paths outside each configured project root.

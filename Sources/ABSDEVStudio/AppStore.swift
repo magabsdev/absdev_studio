@@ -249,7 +249,8 @@ final class AppStore {
             case .observability: projectContainsAnyPackage(["laravel/pulse", "laravel/telescope", "laravel/horizon", "laravel/octane", "barryvdh/laravel-debugbar"])
             case .featureFlags: projectContainsAnyPackage(["laravel/pennant"])
             case .aiInspector: aiFeaturesEnabled && projectContainsAnyPackage(["laravel/ai"])
-            case .aiWorkspace, .mcp: aiFeaturesEnabled
+            case .aiWorkspace: aiFeaturesEnabled
+            case .mcp: true
             case .openWebUI, .lmStudio: false
             case .frontend: projectPathExists("package.json")
             case .events: projectHasArtisanCommand("event:list") || projectDirectoryContainsFiles("app/Events") || projectDirectoryContainsFiles("app/Listeners")

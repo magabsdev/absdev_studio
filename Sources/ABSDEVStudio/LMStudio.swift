@@ -181,6 +181,10 @@ final class LMStudioController {
             )
         } ?? ""
 
+        let projectSource = activeProject.map {
+            AIKnowledgeContext.shared.sourceContext(project: $0, query: userQuery)
+        } ?? ""
+
         var contextParts: [String] = []
 
         if !prompt.isEmpty {
@@ -189,6 +193,10 @@ final class LMStudioController {
 
         if !projectContext.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             contextParts.append(projectContext)
+        }
+
+        if !projectSource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            contextParts.append(projectSource)
         }
 
         if !knowledge.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {

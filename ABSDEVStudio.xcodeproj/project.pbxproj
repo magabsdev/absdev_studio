@@ -31,6 +31,7 @@
 		D1E2F3A4B5C60718293A4B5C /* OpenWebUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1F2A3B4C5D60718293A4B5C /* OpenWebUI.swift */; };
 		C0FFEE000000000000000001 /* LMStudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0FFEE000000000000000002 /* LMStudio.swift */; };
 		A7B8C9D0E1F2031425364758 /* MCP.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8C9D0E1F203142536475869 /* MCP.swift */; };
+		C1D2E3F405162738495A6B7C /* EmbeddedMCPServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2E3F405162738495A6B7C8D /* EmbeddedMCPServer.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -60,6 +61,7 @@
 		E1F2A3B4C5D60718293A4B5C /* OpenWebUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenWebUI.swift; sourceTree = "<group>"; };
 		C0FFEE000000000000000002 /* LMStudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LMStudio.swift; sourceTree = "<group>"; };
 		B8C9D0E1F203142536475869 /* MCP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MCP.swift; sourceTree = "<group>"; };
+		D2E3F405162738495A6B7C8D /* EmbeddedMCPServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmbeddedMCPServer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -114,6 +116,7 @@
 				B1B1B1B1B1B1B1B1B1B1B1B1 /* AIProviderFramework.swift */,
 				DADADA000000000000000002 /* AIKnowledgeContext.swift */,
 				B8C9D0E1F203142536475869 /* MCP.swift */,
+				D2E3F405162738495A6B7C8D /* EmbeddedMCPServer.swift */,
 				867D8A179010B63034C1EDCF /* SharedViews.swift */,
 			);
 			name = Sources;
@@ -227,6 +230,7 @@
 				A1A1A1A1A1A1A1A1A1A1A1A1 /* AIProviderFramework.swift in Sources */,
 				DADADA000000000000000001 /* AIKnowledgeContext.swift in Sources */,
 				A7B8C9D0E1F2031425364758 /* MCP.swift in Sources */,
+				C1D2E3F405162738495A6B7C /* EmbeddedMCPServer.swift in Sources */,
 				54868FD03BCB032E4C153D5F /* SharedViews.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

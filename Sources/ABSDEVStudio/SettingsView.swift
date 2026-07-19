@@ -80,9 +80,10 @@ struct SettingsView: View {
                 OpenWebUISettingsView()
                     .tabItem { Label("Open WebUI", systemImage: "bubble.left.and.bubble.right.fill") }
 
-                MCPSettingsView()
-                    .tabItem { Label("MCP", systemImage: "point.3.connected.trianglepath.dotted") }
             }
+
+            MCPSettingsView()
+                .tabItem { Label("MCP", systemImage: "point.3.connected.trianglepath.dotted") }
         }
         .frame(minWidth: 760, minHeight: 540)
     }
