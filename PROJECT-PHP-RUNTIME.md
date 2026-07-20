@@ -1,13 +1,11 @@
-# Per-project PHP runtimes
+# Per-project PHP runtime
 
-ABSDEV Studio stores the selected PHP executable on each `LaravelProject` using `phpExecutablePath` and `phpDetectionSource`.
+Each `LaravelProject` stores its own `phpExecutablePath` and detection source in the persisted project JSON.
 
-## Behaviour
+The selected project is passed directly to the PHP resolver. Resolution never searches by project path and never falls back to another project, PATH, Homebrew, Herd, ServBay, or `/usr/bin/php` during command execution.
 
-- **Choose…** validates the executable and records its PHP version before saving it to the selected project.
-- **Detect** searches supported runtime managers and persists the first working executable to that project only.
-- **Clear** removes only the selected project's runtime preference.
-- Artisan, Composer, Tinker, queue workers, the scheduler, development processes, route discovery, database inspection, audits, diagrams, and Product Studio use the selected project's executable.
-- The legacy global PHP preference is no longer used to execute project commands.
+Automatic discovery is available only when the user presses **Detect**. The selected executable is then validated and copied into that project's record. Subsequent execution uses only the saved project value.
 
-This allows projects requiring different PHP versions to run side-by-side without changing a global application setting.
+Entity Diagram generation also requires the project's saved PHP runtime and no longer performs independent global discovery.
+
+Configure a project in **Settings → Tools → Project PHP Runtime** after selecting that project in the sidebar.

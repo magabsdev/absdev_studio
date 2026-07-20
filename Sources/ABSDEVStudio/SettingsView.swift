@@ -11,7 +11,7 @@ struct SettingsView: View {
                     SettingsSection(title: "Project PHP Runtime", subtitle: "Each project keeps its own detected or manually selected PHP executable.") {
                         VStack(alignment: .leading, spacing: 12) {
                             HStack(spacing: 10) {
-                                Text(store.selectedProjectPHPPath.isEmpty ? "Automatic detection" : store.selectedProjectPHPPath)
+                                Text(store.selectedProjectPHPPath.isEmpty ? "Not configured for this project" : store.selectedProjectPHPPath)
                                     .font(.body.monospaced())
                                     .foregroundStyle(store.selectedProjectPHPPath.isEmpty ? .secondary : .primary)
                                     .frame(maxWidth: .infinity, alignment: .leading)

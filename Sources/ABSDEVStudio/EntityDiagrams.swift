@@ -394,20 +394,10 @@ final class EntityDiagramModel {
     }
 
     nonisolated private static func resolvePHP(preferred: String?, cwd: String) -> String? {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        var candidates = [preferred].compactMap { $0 }
-        candidates += [
-            "\(home)/Library/Application Support/Herd/bin/php", "\(home)/.config/herd-lite/bin/php",
-            "/Applications/ServBay/package/php/current/bin/php", "/opt/homebrew/opt/php@8.4/bin/php",
-            "/opt/homebrew/opt/php@8.3/bin/php", "/opt/homebrew/opt/php@8.2/bin/php",
-            "/opt/homebrew/bin/php", "/usr/local/bin/php", "/usr/bin/php"
-        ]
-        candidates += shell("which -a php 2>/dev/null || true", cwd: cwd).output.split(separator: "\n").map(String.init)
-        var seen = Set<String>()
-        return candidates.first { candidate in
-            guard seen.insert(candidate).inserted, FileManager.default.isExecutableFile(atPath: candidate) else { return false }
-            return shell("\(quote(candidate)) -r 'echo PHP_VERSION;'", cwd: cwd).status == 0
-        }
+        guard let candidate = preferred?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !candidate.isEmpty,
+              FileManager.default.isExecutableFile(atPath: candidate) else { return nil }
+        return shell("\(quote(candidate)) -r 'echo PHP_VERSION;'", cwd: cwd).status == 0 ? candidate : nil
     }
 
     nonisolated private static func parseTableNames(_ output: String) -> [String] {

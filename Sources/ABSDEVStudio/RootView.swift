@@ -65,6 +65,7 @@ struct RootView: View {
 private struct SidebarView: View {
     @Environment(AppStore.self) private var store
     @State private var projectBeingCustomized: LaravelProject?
+    @State private var projectBeingEdited: LaravelProject?
 
     var body: some View {
         @Bindable var store = store
@@ -86,6 +87,9 @@ private struct SidebarView: View {
                             return true
                         }
                         .contextMenu {
+                            Button("Edit Project…", systemImage: "slider.horizontal.3") {
+                                projectBeingEdited = project
+                            }
                             Button("Rename Project…", systemImage: "pencil") {
                                 store.renameProject(project.id)
                             }
@@ -108,6 +112,9 @@ private struct SidebarView: View {
         .sheet(item: $projectBeingCustomized) { project in
             ProjectIconEditor(project: project)
         }
+        .sheet(item: $projectBeingEdited) { project in
+            ProjectEditorView(projectID: project.id)
+        }
         .safeAreaInset(edge: .bottom) {
             HStack {
                 Button {
@@ -117,6 +124,14 @@ private struct SidebarView: View {
                 }
                 .buttonStyle(.plain)
                 Spacer()
+                Button {
+                    projectBeingEdited = store.selectedProject
+                } label: {
+                    Image(systemName: "slider.horizontal.3")
+                }
+                .buttonStyle(.plain)
+                .help("Edit selected project")
+                .disabled(store.selectedProject == nil)
                 Button {
                     store.removeSelectedProject()
                 } label: {
@@ -190,6 +205,80 @@ private struct ProjectIconView: View {
             green: Double((rgb >> 8) & 0xFF) / 255,
             blue: Double(rgb & 0xFF) / 255
         )
+    }
+}
+
+
+private struct ProjectEditorView: View {
+    @Environment(AppStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    let projectID: LaravelProject.ID
+
+    private var project: LaravelProject? {
+        store.projects.first(where: { $0.id == projectID })
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Project Settings").font(.title2.bold())
+                    Text(project?.name ?? "Project").foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+
+            if let project {
+                Form {
+                    LabeledContent("Alias") {
+                        Text(project.name)
+                    }
+                    LabeledContent("Location") {
+                        Text(project.path)
+                            .font(.callout.monospaced())
+                            .textSelection(.enabled)
+                    }
+
+                    Section("PHP Runtime") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(project.phpExecutablePath?.nonEmpty ?? "Not configured")
+                                .font(.body.monospaced())
+                                .foregroundStyle(project.phpExecutablePath?.nonEmpty == nil ? .secondary : .primary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(8)
+                                .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
+
+                            HStack {
+                                Button("Choose PHP…") {
+                                    store.chooseProjectPHPExecutable(for: projectID)
+                                }
+                                Button("Detect Installed PHP") {
+                                    store.detectProjectPHP(for: projectID)
+                                }
+                                Button("Clear") {
+                                    store.clearProjectPHPExecutable(for: projectID)
+                                }
+                                .disabled(project.phpExecutablePath?.nonEmpty == nil)
+                            }
+
+                            if let version = project.phpVersion.nonEmpty,
+                               project.phpExecutablePath?.nonEmpty != nil {
+                                Label("PHP \(version) · \(project.phpDetectionSource ?? "Project")", systemImage: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                            } else {
+                                Label("Choose the PHP executable used only by this project.", systemImage: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                    }
+                }
+                .formStyle(.grouped)
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 680, minHeight: 430)
     }
 }
 

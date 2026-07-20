@@ -215,26 +215,12 @@ final class ProjectIntelligenceSuiteModel {
     }
 
     nonisolated private static func phpExecutable(for project: LaravelProject) -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        var candidates: [String] = []
-        if let configured = project.phpExecutablePath { candidates.append(configured) }
-        candidates += [
-            "\(home)/Library/Application Support/Herd/bin/php",
-            "\(home)/.config/herd-lite/bin/php",
-            "\(home)/.config/valet/bin/php",
-            "/Applications/ServBay/package/php/current/bin/php",
-            "/opt/homebrew/opt/php@8.4/bin/php",
-            "/opt/homebrew/opt/php@8.3/bin/php",
-            "/opt/homebrew/opt/php@8.2/bin/php",
-            "/opt/homebrew/bin/php",
-            "/usr/local/bin/php",
-            "/usr/bin/php"
-        ]
-        for candidate in candidates where FileManager.default.isExecutableFile(atPath: candidate) {
-            let result = runShell("\(shellQuote(candidate)) -r 'echo PHP_VERSION;'", cwd: project.path)
-            if result.status == 0, !result.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return candidate }
+        guard let configured = project.phpExecutablePath?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !configured.isEmpty,
+              FileManager.default.isExecutableFile(atPath: configured) else {
+            return "/usr/bin/false"
         }
-        return "/usr/bin/php"
+        return configured
     }
 
     nonisolated private static func composerExecutable(projectPath: String) -> String? {
@@ -470,10 +456,12 @@ private final class ProductStudioModel {
         let fm = FileManager.default
         func exists(_ relative: String) -> Bool { fm.fileExists(atPath: root.appendingPathComponent(relative).path) }
         func count(_ command: String) -> Int {
-            Int(shell(command, cwd: project.path).output.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+            let resolved = resolveProjectCommand(command, project: project).command
+            return Int(shell(resolved, cwd: project.path).output.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
         }
         func lines(_ command: String) -> [String] {
-            shell(command, cwd: project.path).output.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
+            let resolved = resolveProjectCommand(command, project: project).command
+            return shell(resolved, cwd: project.path).output.split(separator: "\n").map(String.init).filter { !$0.isEmpty }
         }
         func itemise(_ values: [String], kind: String) -> [ProductStudioItem] {
             values.prefix(250).map { value in ProductStudioItem(title: URL(fileURLWithPath: value).lastPathComponent, detail: value, path: value, kind: kind) }
@@ -714,9 +702,15 @@ private final class ProductStudioModel {
         let display = command
         let php = workingPHP(for: project)
         if command == "php" || command.hasPrefix("php ") {
+            guard php != "/usr/bin/false" else {
+                return ("printf '%s\n' 'PHP is not configured for this project. Open Settings → Project PHP Runtime.'; exit 127", command)
+            }
             resolved = shellQuote(php) + command.dropFirst(3)
         }
         if command == "composer" || command.hasPrefix("composer ") {
+            guard php != "/usr/bin/false" else {
+                return ("printf '%s\n' 'PHP is not configured for this project. Open Settings → Project PHP Runtime.'; exit 127", command)
+            }
             guard let composer = composerExecutable(projectPath: project.path) else {
                 return ("printf '%s\n' 'Composer was not found. Configure Composer in ABSDEV Studio or install it with ServBay/Homebrew.'; exit 127", command)
             }
@@ -726,26 +720,12 @@ private final class ProductStudioModel {
     }
 
     nonisolated private static func workingPHP(for project: LaravelProject) -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        var candidates: [String] = []
-        if let configured = project.phpExecutablePath { candidates.append(configured) }
-        candidates += [
-            "\(home)/Library/Application Support/Herd/bin/php",
-            "\(home)/.config/herd-lite/bin/php",
-            "\(home)/.config/valet/bin/php",
-            "/Applications/ServBay/package/php/current/bin/php",
-            "/opt/homebrew/opt/php@8.4/bin/php",
-            "/opt/homebrew/opt/php@8.3/bin/php",
-            "/opt/homebrew/opt/php@8.2/bin/php",
-            "/opt/homebrew/bin/php",
-            "/usr/local/bin/php",
-            "/usr/bin/php"
-        ]
-        for candidate in candidates where FileManager.default.isExecutableFile(atPath: candidate) {
-            let test = shell("\(shellQuote(candidate)) -r 'echo PHP_VERSION;'", cwd: project.path)
-            if test.status == 0, !test.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return candidate }
+        guard let configured = project.phpExecutablePath?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !configured.isEmpty,
+              FileManager.default.isExecutableFile(atPath: configured) else {
+            return "/usr/bin/false"
         }
-        return "/usr/bin/php"
+        return configured
     }
 
     nonisolated private static func composerExecutable(projectPath: String) -> String? {
