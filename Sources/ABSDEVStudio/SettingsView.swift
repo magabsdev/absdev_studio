@@ -8,17 +8,28 @@ struct SettingsView: View {
         TabView {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    SettingsSection(title: "PHP Runtime", subtitle: "The PHP binary used for Artisan and project inspection.") {
+                    SettingsSection(title: "Project PHP Runtime", subtitle: "Each project keeps its own detected or manually selected PHP executable.") {
                         VStack(alignment: .leading, spacing: 12) {
                             HStack(spacing: 10) {
-                                TextField("PHP executable", text: $store.phpPath)
-                                    .textFieldStyle(.roundedBorder)
-                                Button("Choose…") { store.choosePHPExecutable() }
-                                Button("Detect") { store.detectPHP() }
+                                Text(store.selectedProjectPHPPath.isEmpty ? "Automatic detection" : store.selectedProjectPHPPath)
+                                    .font(.body.monospaced())
+                                    .foregroundStyle(store.selectedProjectPHPPath.isEmpty ? .secondary : .primary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(7)
+                                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
+                                Button("Choose…") { store.chooseProjectPHPExecutable() }
+                                Button("Detect") { store.detectProjectPHP() }
+                                Button("Clear") { store.clearProjectPHPExecutable() }
+                                    .disabled(store.selectedProjectPHPPath.isEmpty)
                             }
+                            Text(store.selectedProjectPHPDescription).font(.caption).foregroundStyle(.secondary)
                             Label(store.phpStatus, systemImage: store.phpStatus.hasPrefix("PHP ") ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                                 .foregroundStyle(store.phpStatus.hasPrefix("PHP ") ? .green : .orange)
                         }
+                    }
+
+                    SettingsSection(title: "Global PHP Fallback", subtitle: "Used only when a project-specific runtime has not been resolved.") {
+                        TextField("Optional global PHP executable", text: $store.phpPath).textFieldStyle(.roundedBorder)
                     }
 
                     SettingsSection(title: "Applications", subtitle: "Choose the applications opened from the project toolbar.") {
@@ -58,7 +69,7 @@ struct SettingsView: View {
                     SettingsSection(title: "Project Behaviour", subtitle: "ABSDEV Studio stores project references in Application Support.") {
                         VStack(alignment: .leading, spacing: 12) {
                             Label("Development services are stopped explicitly from the toolbar or Development screen.", systemImage: "stop.circle")
-                            Label("Commands run with an expanded developer PATH containing ServBay, Homebrew, Vite and system tools.", systemImage: "terminal")
+                            Label("Commands run with an expanded developer PATH containing ServBay, Homebrew, Volta and system tools.", systemImage: "terminal")
                             Divider()
                             Text("Current status: \(store.statusMessage)").foregroundStyle(.secondary)
                         }

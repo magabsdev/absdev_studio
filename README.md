@@ -99,3 +99,16 @@ The Project Intelligence workspace now provides seven coordinated native capabil
 - Cross-project source search excluding generated, vendor, node_modules, Git, and DerivedData content.
 
 Project data is stored under `~/Library/Application Support/ABSDEVStudio/ProjectIntelligence` and does not rename or alter source project folders.
+
+## Database Entity Diagrams
+
+Project Intelligence now includes an **Entity Diagrams** workspace. For Laravel projects it reads the live configured database through `artisan db:show --json` and `artisan db:table --json`, displays tables, columns, primary keys, and foreign-key relationships, and supports:
+
+- Automatic and manual layout
+- Table and column filtering
+- Per-project saved diagram snapshots
+- Offline reopening of saved diagrams
+- PDF export
+- Native macOS printing
+
+Configure the selected project's PHP runtime in **Settings → Project PHP Runtime** before loading a live schema. ABSDEV Studio stores the detected executable and its source separately for each project.

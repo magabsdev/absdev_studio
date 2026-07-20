@@ -104,6 +104,17 @@ final class AppStore {
     var servBayServiceMetrics: [String: ServBayServiceMetrics] = [:]
     var servBayAdvancedLastRefresh: Date?
 
+    var selectedProjectPHPPath: String {
+        selectedProject?.phpExecutablePath ?? ""
+    }
+
+    var selectedProjectPHPDescription: String {
+        guard let project = selectedProject else { return "No project selected" }
+        guard let path = project.phpExecutablePath, !path.isEmpty else { return "Automatic detection has not been saved for this project." }
+        let source = project.phpDetectionSource ?? "Detected"
+        return "\(source): \(path)"
+    }
+
     var phpPath: String {
         didSet { UserDefaults.standard.set(phpPath, forKey: "phpPath") }
     }
@@ -2582,34 +2593,58 @@ final class AppStore {
     }
 
     func choosePHPExecutable() {
+        chooseProjectPHPExecutable()
+    }
+
+    func chooseProjectPHPExecutable() {
+        guard let projectID = selectedProjectID else { return }
         let panel = NSOpenPanel()
-        panel.title = "Choose PHP executable"
-        panel.message = "Select a working PHP binary, for example Herd, Homebrew, or system PHP."
+        panel.title = "Choose PHP executable for this project"
+        panel.message = "This PHP runtime will be stored only for the selected project."
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         panel.treatsFilePackagesAsDirectories = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        phpPath = url.path
+        guard let index = projects.firstIndex(where: { $0.id == projectID }) else { return }
+        projects[index].phpExecutablePath = url.path
+        projects[index].phpDetectionSource = "Manual"
+        saveProjects()
         Task { await validateSelectedPHP() }
     }
 
-    func detectPHP() {
+    func clearProjectPHPExecutable() {
+        guard let projectID = selectedProjectID,
+              let index = projects.firstIndex(where: { $0.id == projectID }) else { return }
+        projects[index].phpExecutablePath = nil
+        projects[index].phpDetectionSource = nil
+        saveProjects()
+        phpStatus = "Project PHP preference cleared"
+    }
+
+    func detectPHP() { detectProjectPHP() }
+
+    func detectProjectPHP() {
         guard let project = selectedProject else { return }
+        if let index = projects.firstIndex(where: { $0.id == project.id }) {
+            projects[index].phpExecutablePath = nil
+            projects[index].phpDetectionSource = nil
+            saveProjects()
+        }
         Task {
-            phpPath = ""
             if await resolvePHPExecutable(in: project.path) != nil {
                 await refreshProject()
             } else {
-                showAlert(title: "No working PHP found", message: "ABSDEV Studio checked common Herd, Homebrew, Valet, and PATH locations. Choose a PHP executable manually in Settings.")
+                showAlert(title: "No working PHP found", message: "ABSDEV Studio checked the project preference, Herd, ServBay, Homebrew, Valet, and PATH locations.")
             }
         }
     }
 
     func validateSelectedPHP() async {
         guard let project = selectedProject else { return }
-        guard !phpPath.isEmpty else { phpStatus = "No PHP executable selected"; return }
-        let result = await captureResult("\(shellQuote(phpPath)) -r 'echo PHP_VERSION;'", in: project.path)
+        let selectedPath = project.phpExecutablePath ?? phpPath
+        guard !selectedPath.isEmpty else { phpStatus = "No PHP executable selected"; return }
+        let result = await captureResult("\(shellQuote(selectedPath)) -r 'echo PHP_VERSION;'", in: project.path)
         if result.succeeded {
             phpStatus = "PHP \(result.output.trimmed)"
             await refreshProject()
@@ -2662,34 +2697,43 @@ final class AppStore {
     }
 
     private func resolvePHPExecutable(in directory: String) async -> String? {
-        var candidates: [String] = []
-        if !phpPath.isEmpty { candidates.append(phpPath) }
+        var candidates: [(path: String, source: String)] = []
+        if let project = projects.first(where: { $0.path == directory }),
+           let projectPHP = project.phpExecutablePath, !projectPHP.isEmpty {
+            candidates.append((projectPHP, project.phpDetectionSource ?? "Project"))
+        }
+        if !phpPath.isEmpty { candidates.append((phpPath, "Global fallback")) }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         candidates += [
-            "\(home)/Library/Application Support/Herd/bin/php",
-            "\(home)/.config/herd-lite/bin/php",
-            "\(home)/.config/valet/bin/php",
-            "/opt/homebrew/opt/php@8.4/bin/php",
-            "/opt/homebrew/opt/php@8.3/bin/php",
-            "/opt/homebrew/opt/php@8.2/bin/php",
-            "/opt/homebrew/bin/php",
-            "/usr/local/bin/php",
-            "/usr/bin/php"
+            ("\(home)/Library/Application Support/Herd/bin/php", "Herd"),
+            ("\(home)/.config/herd-lite/bin/php", "Herd Lite"),
+            ("\(home)/.config/valet/bin/php", "Valet"),
+            ("/Applications/ServBay/package/php/current/bin/php", "ServBay"),
+            ("/opt/homebrew/opt/php@8.4/bin/php", "Homebrew 8.4"),
+            ("/opt/homebrew/opt/php@8.3/bin/php", "Homebrew 8.3"),
+            ("/opt/homebrew/opt/php@8.2/bin/php", "Homebrew 8.2"),
+            ("/opt/homebrew/bin/php", "Homebrew"),
+            ("/usr/local/bin/php", "Local"),
+            ("/usr/bin/php", "System")
         ]
         let pathOutput = await capture("which -a php 2>/dev/null || true", in: directory)
-        candidates += pathOutput.lines
+        candidates += pathOutput.lines.map { ($0, "PATH") }
 
         var seen = Set<String>()
-        for candidate in candidates where seen.insert(candidate).inserted {
-            guard FileManager.default.isExecutableFile(atPath: candidate) else { continue }
-            let result = await captureResult("\(shellQuote(candidate)) -r 'echo PHP_VERSION;'", in: directory)
+        for candidate in candidates where seen.insert(candidate.path).inserted {
+            guard FileManager.default.isExecutableFile(atPath: candidate.path) else { continue }
+            let result = await captureResult("\(shellQuote(candidate.path)) -r 'echo PHP_VERSION;'", in: directory)
             if result.succeeded, !result.output.trimmed.isEmpty {
-                phpPath = candidate
-                phpStatus = "PHP \(result.output.trimmed)"
-                return candidate
+                phpStatus = "PHP \(result.output.trimmed) · \(candidate.source)"
+                if let index = projects.firstIndex(where: { $0.path == directory }) {
+                    projects[index].phpExecutablePath = candidate.path
+                    projects[index].phpDetectionSource = candidate.source
+                    projects[index].phpVersion = result.output.trimmed
+                    saveProjects()
+                }
+                return candidate.path
             }
         }
-        phpPath = ""
         phpStatus = "No working PHP executable found"
         return nil
     }
@@ -2697,7 +2741,8 @@ final class AppStore {
     private func resolvedProcessCommand(_ command: String) -> String {
         guard command.hasPrefix("php ") else { return command }
         let suffix = String(command.dropFirst(4))
-        return "\(shellQuote(phpPath)) \(suffix)"
+        let executable = selectedProject?.phpExecutablePath ?? phpPath
+        return "\(shellQuote(executable)) \(suffix)"
     }
 
     private func concisePHPError(_ output: String) -> String {

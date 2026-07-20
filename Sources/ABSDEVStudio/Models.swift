@@ -29,6 +29,8 @@ struct LaravelProject: Identifiable, Hashable, Codable, Sendable {
     var iconSymbol: String? = nil
     var iconColorHex: String? = nil
     var customIconPath: String? = nil
+    var phpExecutablePath: String? = nil
+    var phpDetectionSource: String? = nil
 
     static let sample = LaravelProject(
         name: "PoolMate",

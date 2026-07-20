@@ -204,7 +204,7 @@ final class ProjectIntelligenceSuiteModel {
 private extension ProjectAuditFinding.Severity { var rank: Int { switch self { case .critical: 0; case .high: 1; case .medium: 2; case .low: 3; case .info: 4 } } }
 
 struct ProjectIntelligenceView: View {
-    enum Tab: String, CaseIterable, Identifiable { case memory = "AI Memory", graph = "Knowledge Graph", timeline = "Timeline", audit = "Health Audit", mcp = "MCP Hub", automation = "Automation", search = "Cross-Project Search"; var id: String { rawValue } }
+    enum Tab: String, CaseIterable, Identifiable { case memory = "AI Memory", graph = "Knowledge Graph", entities = "Entity Diagrams", timeline = "Timeline", audit = "Health Audit", mcp = "MCP Hub", automation = "Automation", search = "Cross-Project Search"; var id: String { rawValue } }
     @Environment(AppStore.self) private var store
     @State private var model = ProjectIntelligenceSuiteModel()
     @State private var tab: Tab = .memory
@@ -218,7 +218,7 @@ struct ProjectIntelligenceView: View {
             HStack { PageHeader(title: "Project Intelligence", subtitle: "Persistent project memory, repository knowledge, audits, automation, and workspace-wide MCP intelligence."); Spacer(); if model.isBusy { ProgressView() }; Text(model.status).font(.caption).foregroundStyle(.secondary) }.padding(24)
             Picker("Feature", selection: $tab) { ForEach(Tab.allCases) { Text($0.rawValue).tag($0) } }.pickerStyle(.segmented).padding(.horizontal, 24).padding(.bottom, 16)
             Divider()
-            Group { switch tab { case .memory: memoryView; case .graph: graphView; case .timeline: timelineView; case .audit: auditView; case .mcp: mcpView; case .automation: automationView; case .search: searchView } }
+            Group { switch tab { case .memory: memoryView; case .graph: graphView; case .entities: EntityDiagramWorkspaceView(project: store.selectedProject); case .timeline: timelineView; case .audit: auditView; case .mcp: mcpView; case .automation: automationView; case .search: searchView } }
         }
         .task(id: store.selectedProjectID) { model.load(project: store.selectedProject) }
     }
