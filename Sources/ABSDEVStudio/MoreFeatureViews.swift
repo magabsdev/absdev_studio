@@ -31,7 +31,8 @@ struct DatabaseView: View {
             .padding(.bottom, 18)
 
             HStack(spacing: 14) {
-                MetricCard(title: "Connection", value: store.environmentEntries.first(where: { $0.key == "DB_CONNECTION" })?.value ?? "Unknown", detail: "From .env", symbol: "cylinder")
+                MetricCard(title: "Connection", value: environmentValue("DB_CONNECTION", fallback: "Unknown"), detail: "Selected project .env", symbol: "cylinder")
+                MetricCard(title: "Database", value: databaseDisplayName, detail: databaseLocationDetail, symbol: "externaldrive")
                 MetricCard(title: "Tables", value: "\(store.databaseTables.count)", detail: store.databaseSchemaMessage, symbol: "tablecells")
                 MetricCard(title: "Safety", value: "Confirmed", detail: "Fresh requires confirmation", symbol: "lock.shield")
             }
@@ -137,6 +138,32 @@ struct DatabaseView: View {
         .task(id: store.selectedProjectID) {
             await store.refreshDatabaseSchema()
         }
+    }
+
+
+    private func environmentValue(_ key: String, fallback: String = "") -> String {
+        guard let raw = store.environmentEntries.first(where: { $0.key == key })?.value else { return fallback }
+        let value = raw.trimmingCharacters(in: CharacterSet(charactersIn: "\"' "))
+        return value.isEmpty ? fallback : value
+    }
+
+    private var databaseDisplayName: String {
+        let connection = environmentValue("DB_CONNECTION", fallback: "")
+        let database = environmentValue("DB_DATABASE", fallback: "Not configured")
+        guard connection == "sqlite", database != "Not configured" else { return database }
+        if database == ":memory:" { return database }
+        return URL(fileURLWithPath: database).lastPathComponent
+    }
+
+    private var databaseLocationDetail: String {
+        let connection = environmentValue("DB_CONNECTION", fallback: "")
+        let database = environmentValue("DB_DATABASE", fallback: "")
+        if connection == "sqlite", !database.isEmpty {
+            return database.hasPrefix("/") ? database : "Relative to project root"
+        }
+        let host = environmentValue("DB_HOST", fallback: "localhost")
+        let port = environmentValue("DB_PORT", fallback: "")
+        return port.isEmpty ? host : "\(host):\(port)"
     }
 
     private var columnsView: some View {
@@ -851,16 +878,13 @@ struct ServBayView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 12) {
-                PageHeader(title: "ServBay", subtitle: "Manage locally installed ServBay services and monitor this Mac.")
+                PageHeader(title: "ServBay", subtitle: "Manage ServBay services, runtimes, websites, certificates, and logs.")
                 Spacer()
                 if store.isServBayBusy { ProgressView().controlSize(.small) }
                 Button("Open ServBay", systemImage: "macwindow") { store.openServBay() }
                 Button("Logs", systemImage: "doc.text.magnifyingglass") { store.revealServBayLogs() }
                 Button("Refresh", systemImage: "arrow.clockwise") {
-                    Task {
-                        await store.refreshServBay()
-                        await store.sampleSystemLoad()
-                    }
+                    Task { await store.refreshServBay() }
                 }
                 .buttonStyle(.borderedProminent)
             }
@@ -876,7 +900,6 @@ struct ServBayView: View {
                         MetricCard(title: "Running", value: "\(runningCount)", detail: "Reported by servbayctl", symbol: "play.circle.fill")
                     }
 
-                    ServBaySystemMonitor()
 
                     GroupBox("Services") {
                         VStack(spacing: 0) {
@@ -901,13 +924,7 @@ struct ServBayView: View {
                 .padding(28)
             }
         }
-        .task {
-            await store.refreshServBay()
-            while !Task.isCancelled {
-                await store.sampleSystemLoad()
-                try? await Task.sleep(for: .seconds(2))
-            }
-        }
+        .task { await store.refreshServBay() }
     }
 }
 

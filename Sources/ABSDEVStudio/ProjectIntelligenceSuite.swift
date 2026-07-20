@@ -381,6 +381,12 @@ private final class ProductStudioModel {
         case metrics = "Code Metrics"
         case documentation = "Documentation"
         case replay = "Project Replay"
+        case digitalTwin = "Project Digital Twin"
+        case requestFlow = "Request Flow"
+        case drift = "Architecture Drift"
+        case runtime = "Runtime Manager"
+        case dependencies = "Dependency Inspector"
+        case plugins = "Plugin SDK"
         var id: String { rawValue }
         var symbol: String {
             switch self {
@@ -404,6 +410,12 @@ private final class ProductStudioModel {
             case .metrics: "chart.xyaxis.line"
             case .documentation: "doc.richtext.fill"
             case .replay: "clock.arrow.circlepath"
+            case .digitalTwin: "brain.filled.head.profile"
+            case .requestFlow: "arrow.triangle.branch"
+            case .drift: "exclamationmark.triangle.fill"
+            case .runtime: "switch.2"
+            case .dependencies: "shippingbox.and.arrow.backward"
+            case .plugins: "puzzlepiece.extension.fill"
             }
         }
     }
@@ -463,7 +475,15 @@ private final class ProductStudioModel {
             let branch = shell("git branch --show-current 2>/dev/null", cwd: project.path).output.trimmingCharacters(in: .whitespacesAndNewlines)
             let dirty = !shell("git status --porcelain", cwd: project.path).output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             let routeCount = isLaravel ? count("php artisan route:list --json 2>/dev/null | php -r '$d=json_decode(stream_get_contents(STDIN),true); echo is_array($d)?count($d):0;' 2>/dev/null") : 0
+            var healthScore = 100
+            if dirty { healthScore -= 3 }
+            if !exists("composer.lock") { healthScore -= 12 }
+            if tests == 0 { healthScore -= 20 }
+            if !exists("README.md") { healthScore -= 5 }
+            if !exists(".gitignore") { healthScore -= 5 }
+            healthScore = max(0, healthScore)
             return ([
+                .init(title: "Project Health", value: "\(healthScore)%", detail: healthScore >= 90 ? "Excellent baseline" : "Review recommended", symbol: "heart.text.square"),
                 .init(title: "Source Files", value: "\(phpFiles)", detail: "Application PHP files", symbol: "doc.on.doc"),
                 .init(title: "Tests", value: "\(tests)", detail: "Automated test files", symbol: "checkmark.seal"),
                 .init(title: "Routes", value: "\(routeCount)", detail: "Registered Laravel routes", symbol: "signpost.right"),
@@ -571,6 +591,53 @@ private final class ProductStudioModel {
                 return ProductStudioItem(title: p.count > 2 ? p[2] : row, detail: p.count > 1 ? "\(p[0]) · \(p[1])" : row, path: nil, kind: "History")
             }
             return ([.init(title: "Replay Events", value: "\(history.count)", detail: "Recent project evolution", symbol: "clock.arrow.circlepath")], history, "Project replay built from Git history")
+
+        case .digitalTwin:
+            let groups: [(String, String)] = [
+                ("Routes", "find routes Modules -type f -name '*.php' 2>/dev/null | sort"),
+                ("Controllers", "find app Modules -type f -path '*/Controllers/*.php' 2>/dev/null | sort"),
+                ("Models", "find app Modules -type f -path '*/Models/*.php' 2>/dev/null | sort"),
+                ("Services", "find app Modules -type f 2>/dev/null | grep -E '/(Services|Repositories|Actions)/.*\\.php$' | sort"),
+                ("Policies", "find app Modules -type f -path '*/Policies/*.php' 2>/dev/null | sort"),
+                ("Jobs", "find app Modules -type f -path '*/Jobs/*.php' 2>/dev/null | sort"),
+                ("Events", "find app Modules -type f 2>/dev/null | grep -E '/(Events|Listeners)/.*\\.php$' | sort"),
+                ("Tests", "find tests Tests -type f -name '*.php' 2>/dev/null | sort")
+            ]
+            let twin = groups.flatMap { name, command in itemise(lines(command), kind: name) }
+            return ([.init(title: "Semantic Nodes", value: "\(twin.count)", detail: "Routes, code, data, events and tests", symbol: "brain.filled.head.profile")], twin, "Digital twin snapshot built")
+
+        case .requestFlow:
+            let routeRows = lines("grep -RhoE 'Route::(get|post|put|patch|delete|apiResource|resource)[^;]+' routes Modules/*/Routes 2>/dev/null | head -250")
+            let flows = routeRows.map { ProductStudioItem(title: $0, detail: "Route → middleware → controller → service → model → response", path: nil, kind: "Route") }
+            return ([.init(title: "Request Flows", value: "\(flows.count)", detail: "Discovered route entry points", symbol: "arrow.triangle.branch")], flows, "Request-flow map generated")
+
+        case .drift:
+            var findings: [ProductStudioItem] = []
+            let largeControllers = lines("find app Modules -type f -path '*/Controllers/*.php' -exec wc -l {} + 2>/dev/null | sort -nr | head -50")
+            findings += largeControllers.map { ProductStudioItem(title: "Large controller", detail: $0, path: $0.split(separator: ":").first.map(String.init), kind: "High") }
+            let directDB = lines("grep -RIlE 'DB::(table|select|statement)' app/Http Modules 2>/dev/null | head -100")
+            findings += directDB.map { ProductStudioItem(title: "Direct database access", detail: $0, path: $0, kind: "Medium") }
+            return ([.init(title: "Drift Findings", value: "\(findings.count)", detail: findings.isEmpty ? "No obvious drift" : "Review architecture boundaries", symbol: "exclamationmark.triangle.fill")], findings, findings.isEmpty ? "No obvious architecture drift found" : "Architecture drift needs review")
+
+        case .runtime:
+            let specs = [("PHP", "php -v 2>/dev/null | head -1"), ("Composer", "composer --version 2>/dev/null"), ("Node", "node --version 2>/dev/null"), ("npm", "npm --version 2>/dev/null"), ("pnpm", "pnpm --version 2>/dev/null"), ("Bun", "bun --version 2>/dev/null"), ("Docker", "docker --version 2>/dev/null")]
+            let values = specs.map { name, command -> ProductStudioItem in
+                let value = shell(command, cwd: project.path).output.trimmingCharacters(in: .whitespacesAndNewlines)
+                return ProductStudioItem(title: name, detail: value.isEmpty ? "Not detected" : value, path: nil, kind: "Runtime")
+            }
+            return ([.init(title: "Runtimes", value: "\(values.filter { $0.detail != "Not detected" }.count)/\(values.count)", detail: "Detected project toolchain", symbol: "switch.2")], values, "Runtime inventory refreshed")
+
+        case .dependencies:
+            let rows = lines("grep -E '\"name\"[[:space:]]*:|\"version\"[[:space:]]*:|\"license\"[[:space:]]*:' composer.lock 2>/dev/null | head -600")
+            let deps = rows.map { row -> ProductStudioItem in
+                let parts = row.split(separator: "\t").map(String.init)
+                return ProductStudioItem(title: parts.first ?? row, detail: parts.dropFirst().joined(separator: " · "), path: nil, kind: "Package")
+            }
+            return ([.init(title: "Dependencies", value: "\(deps.count)", detail: "Versions and licences", symbol: "shippingbox.and.arrow.backward")], deps, "Dependency inventory loaded")
+
+        case .plugins:
+            let manifests = itemise(lines("find . -maxdepth 4 -type f 2>/dev/null | grep -E '/(absdev-plugin|plugin)\\.json$' | sort"), kind: "Plugin")
+            return ([.init(title: "Installed Plugins", value: "\(manifests.count)", detail: "Analyzer and provider extensions", symbol: "puzzlepiece.extension.fill")], manifests, manifests.isEmpty ? "Plugin SDK ready — no project plugins installed" : "Plugin manifests loaded")
         }
     }
 
@@ -774,7 +841,12 @@ private struct ProductStudioView: View {
                         Button("Composer Outdated", systemImage: "arrow.up.circle") { Task { await model.run("composer outdated --direct", project: project) } }
                     case .documentation:
                         Button("Generate Route Reference", systemImage: "doc.badge.gearshape") { Task { await model.run("php artisan route:list", project: project) } }
-                    case .architecture, .dashboard, .templates, .metrics, .replay:
+                    case .runtime:
+                        SettingsLink { Label("Open Settings", systemImage: "gearshape") }
+                    case .dependencies:
+                        Button("Composer Outdated", systemImage: "clock.arrow.circlepath") { Task { await model.run("composer outdated --direct", project: project) } }
+                        Button("Security Audit", systemImage: "shield") { Task { await model.run("composer audit", project: project) } }
+                    case .digitalTwin, .requestFlow, .drift, .plugins, .architecture, .dashboard, .templates, .metrics, .replay:
                         Button("Open Project", systemImage: "folder") { NSWorkspace.shared.open(URL(fileURLWithPath: project.path)) }
                     }
                     Spacer()
@@ -805,6 +877,12 @@ private struct ProductStudioView: View {
         case .metrics: "Measure source size, classes, methods and test coverage foundations."
         case .documentation: "Inventory project documentation and generate technical references."
         case .replay: "Review project evolution as a chronological development timeline."
+        case .digitalTwin: "Build a shared semantic inventory of routes, models, services, tests, jobs, events and policies."
+        case .requestFlow: "Trace request entry points through middleware, controllers, services, models and responses."
+        case .drift: "Detect oversized controllers, direct database access, missing boundaries and maintainability drift."
+        case .runtime: "Inspect and manage the PHP, Composer, Node, package-manager and container toolchain per project."
+        case .dependencies: "Review package versions, licences, vulnerabilities, maintenance and upgrade readiness."
+        case .plugins: "Discover ABSDEV Studio extension manifests for analyzers, providers and custom project tools."
         }
     }
 

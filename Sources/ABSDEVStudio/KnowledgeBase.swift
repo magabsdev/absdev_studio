@@ -259,6 +259,7 @@ struct KBManifest: Codable {
   var copied: UUID?
   var cut = false
   var showingTrash = false
+  var favoriteRevision = 0
   private var saver: Task<Void, Never>?
   init(projectID: UUID, persistence: KBPersistence = .shared) {
     self.projectID = projectID
@@ -537,21 +538,34 @@ struct KBManifest: Codable {
     saver?.cancel()
     saver = nil
 
-    let request = NSFetchRequest<KBDocument>(entityName: "KBDocument")
-    request.fetchLimit = 1
-    request.predicate = NSPredicate(
-      format: "projectID == %@ AND id == %@",
-      projectID as CVarArg,
-      documentID as CVarArg
-    )
-
     do {
-      guard let document = try context.fetch(request).first else { return }
-      document.isFavorite.toggle()
+      let document: KBDocument
+      if let loaded = documents.first(where: { $0.id == documentID && !$0.isDeleted }) {
+        document = loaded
+      } else {
+        let request = NSFetchRequest<KBDocument>(entityName: "KBDocument")
+        request.fetchLimit = 1
+        request.predicate = NSPredicate(
+          format: "projectID == %@ AND id == %@",
+          projectID as CVarArg,
+          documentID as CVarArg
+        )
+        guard let fetched = try context.fetch(request).first else { return }
+        document = fetched
+      }
+
+      document.isFavorite = !document.isFavorite
       document.updatedAt = Date()
+      context.processPendingChanges()
       try context.save()
       selection = documentID
-      status = "Saved"
+      status = document.isFavorite ? "Added to Favorites" : "Removed from Favorites"
+
+      // KBDocument is an NSManagedObject and its individual property mutations are
+      // not Observation-aware. This revision explicitly invalidates the editor and
+      // navigator star after the Core Data save, including when the same managed
+      // object instances are returned by the subsequent fetch.
+      favoriteRevision &+= 1
       reload()
     } catch {
       context.rollback()
@@ -1253,6 +1267,7 @@ private struct KBWorkspace: View {
             .buttonStyle(.borderless)
             .foregroundStyle(document.isFavorite ? .yellow : .secondary)
             .help(document.isFavorite ? "Remove from Favorites" : "Add to Favorites")
+            .id("favorite-\(document.id.uuidString)-\(store.favoriteRevision)")
 
               let selectedPriority = KBPriority(rawValue: document.priority) ?? .normal
 

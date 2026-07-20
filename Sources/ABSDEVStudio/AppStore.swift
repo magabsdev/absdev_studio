@@ -1064,41 +1064,192 @@ final class AppStore {
         for process in processes where process.isRunning { stopProcess(process) }
     }
 
+    private func directDatabaseConfiguration(for project: LaravelProject) -> [String: String] {
+        let values = projectEnvironment(at: project.path)
+        let connection = values["DB_CONNECTION"]?.trimmed.nonEmpty ?? "mysql"
+        var database = values["DB_DATABASE"]?.trimmed ?? ""
+        if connection == "sqlite", !database.isEmpty, database != ":memory:", !database.hasPrefix("/") {
+            database = URL(fileURLWithPath: project.path).appendingPathComponent(database).standardizedFileURL.path
+        }
+        return [
+            "connection": connection,
+            "host": values["DB_HOST"]?.trimmed.nonEmpty ?? "127.0.0.1",
+            "port": values["DB_PORT"]?.trimmed ?? "",
+            "database": database,
+            "username": values["DB_USERNAME"]?.trimmed ?? "",
+            "password": values["DB_PASSWORD"] ?? "",
+            "charset": values["DB_CHARSET"]?.trimmed.nonEmpty ?? "utf8mb4"
+        ]
+    }
+
+    private func directDatabaseCommand(
+        php: String,
+        project: LaravelProject,
+        operation: String,
+        table: String? = nil
+    ) -> String? {
+        var payload = directDatabaseConfiguration(for: project)
+        payload["operation"] = operation
+        if let table { payload["table"] = table }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload),
+              let json = String(data: data, encoding: .utf8) else { return nil }
+        let config = Data(json.utf8).base64EncodedString()
+
+        let script = #"""
+        $cfg = json_decode(base64_decode(getenv('ABSDEV_DB_CONFIG')), true, 512, JSON_THROW_ON_ERROR);
+        $driver = strtolower((string)($cfg['connection'] ?? 'mysql'));
+        $database = (string)($cfg['database'] ?? '');
+        $host = (string)($cfg['host'] ?? '127.0.0.1');
+        $port = (string)($cfg['port'] ?? '');
+        $user = (string)($cfg['username'] ?? '');
+        $password = (string)($cfg['password'] ?? '');
+        $charset = (string)($cfg['charset'] ?? 'utf8mb4');
+        $operation = (string)($cfg['operation'] ?? 'tables');
+        $table = (string)($cfg['table'] ?? '');
+
+        if ($driver === 'sqlite') {
+            $dsn = 'sqlite:' . $database;
+        } elseif ($driver === 'pgsql' || $driver === 'postgres' || $driver === 'postgresql') {
+            $dsn = 'pgsql:host=' . $host . ($port !== '' ? ';port=' . $port : '') . ';dbname=' . $database;
+        } elseif ($driver === 'sqlsrv') {
+            $dsn = 'sqlsrv:Server=' . $host . ($port !== '' ? ',' . $port : '') . ';Database=' . $database;
+        } else {
+            $dsn = 'mysql:host=' . $host . ($port !== '' ? ';port=' . $port : '') . ';dbname=' . $database . ';charset=' . $charset;
+        }
+
+        $pdo = new PDO($dsn, $user, $password, [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES => false,
+        ]);
+
+        if ($operation === 'identity') {
+            $actual = $database;
+            if ($driver === 'mysql' || $driver === 'mariadb') {
+                $actual = (string)$pdo->query('SELECT DATABASE()')->fetchColumn();
+            } elseif ($driver === 'pgsql' || $driver === 'postgres' || $driver === 'postgresql') {
+                $actual = (string)$pdo->query('SELECT current_database()')->fetchColumn();
+            } elseif ($driver === 'sqlsrv') {
+                $actual = (string)$pdo->query('SELECT DB_NAME()')->fetchColumn();
+            }
+            echo json_encode(['connection' => $driver, 'database' => $actual], JSON_THROW_ON_ERROR);
+            exit;
+        }
+
+        if ($operation === 'tables') {
+            if ($driver === 'sqlite') {
+                $rows = $pdo->query("SELECT name, '' AS size, '' AS rows FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")->fetchAll();
+            } elseif ($driver === 'pgsql' || $driver === 'postgres' || $driver === 'postgresql') {
+                $statement = $pdo->prepare("SELECT tablename AS name, '' AS size, '' AS rows FROM pg_catalog.pg_tables WHERE schemaname = current_schema() ORDER BY tablename");
+                $statement->execute();
+                $rows = $statement->fetchAll();
+            } elseif ($driver === 'sqlsrv') {
+                $rows = $pdo->query("SELECT TABLE_NAME AS name, '' AS size, '' AS rows FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE' AND TABLE_CATALOG=DB_NAME() ORDER BY TABLE_NAME")->fetchAll();
+            } else {
+                $statement = $pdo->prepare("SELECT TABLE_NAME AS name, COALESCE(TABLE_ROWS, 0) AS rows, CONCAT(ROUND((DATA_LENGTH + INDEX_LENGTH) / 1024 / 1024, 2), ' MB') AS size FROM information_schema.TABLES WHERE TABLE_SCHEMA = :database ORDER BY TABLE_NAME");
+                $statement->execute(['database' => $database]);
+                $rows = $statement->fetchAll();
+            }
+            echo json_encode(['database' => $database, 'tables' => $rows], JSON_THROW_ON_ERROR);
+            exit;
+        }
+
+        if ($operation === 'details') {
+            if ($table === '') { throw new RuntimeException('No table was selected.'); }
+            $columns = []; $indexes = []; $foreignKeys = [];
+            if ($driver === 'sqlite') {
+                $quoted = str_replace("'", "''", $table);
+                foreach ($pdo->query("PRAGMA table_info('$quoted')") as $column) {
+                    $columns[] = ['name' => $column['name'], 'type' => $column['type'], 'nullable' => ((int)$column['notnull']) === 0, 'default' => $column['dflt_value'] ?? '', 'extra' => ((int)$column['pk']) === 1 ? 'primary' : ''];
+                }
+                foreach ($pdo->query("PRAGMA index_list('$quoted')") as $index) {
+                    $indexName = (string)$index['name'];
+                    $escapedIndex = str_replace("'", "''", $indexName);
+                    $indexColumns = array_column($pdo->query("PRAGMA index_info('$escapedIndex')")->fetchAll(), 'name');
+                    $indexes[] = ['name' => $indexName, 'columns' => implode(', ', $indexColumns), 'unique' => ((int)$index['unique']) === 1, 'primary' => false];
+                }
+                foreach ($pdo->query("PRAGMA foreign_key_list('$quoted')") as $fk) {
+                    $foreignKeys[] = ['name' => 'fk_' . $table . '_' . $fk['id'], 'columns' => $fk['from'], 'referenced_table' => $fk['table'], 'referenced_columns' => $fk['to']];
+                }
+            } elseif ($driver === 'mysql' || $driver === 'mariadb') {
+                $statement = $pdo->prepare("SELECT COLUMN_NAME AS name, COLUMN_TYPE AS type, IS_NULLABLE AS nullable, COALESCE(COLUMN_DEFAULT, '') AS `default`, EXTRA AS extra FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=:database AND TABLE_NAME=:table ORDER BY ORDINAL_POSITION");
+                $statement->execute(['database' => $database, 'table' => $table]);
+                foreach ($statement->fetchAll() as $column) { $column['nullable'] = strtoupper((string)$column['nullable']) === 'YES'; $columns[] = $column; }
+                $statement = $pdo->prepare("SELECT INDEX_NAME AS name, GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ', ') AS columns, MIN(NON_UNIQUE)=0 AS `unique`, INDEX_NAME='PRIMARY' AS `primary` FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=:database AND TABLE_NAME=:table GROUP BY INDEX_NAME ORDER BY INDEX_NAME");
+                $statement->execute(['database' => $database, 'table' => $table]);
+                $indexes = $statement->fetchAll();
+                $statement = $pdo->prepare("SELECT CONSTRAINT_NAME AS name, GROUP_CONCAT(COLUMN_NAME ORDER BY ORDINAL_POSITION SEPARATOR ', ') AS columns, REFERENCED_TABLE_NAME AS referenced_table, GROUP_CONCAT(REFERENCED_COLUMN_NAME ORDER BY ORDINAL_POSITION SEPARATOR ', ') AS referenced_columns FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA=:database AND TABLE_NAME=:table AND REFERENCED_TABLE_NAME IS NOT NULL GROUP BY CONSTRAINT_NAME, REFERENCED_TABLE_NAME ORDER BY CONSTRAINT_NAME");
+                $statement->execute(['database' => $database, 'table' => $table]);
+                $foreignKeys = $statement->fetchAll();
+            } else {
+                $statement = $pdo->prepare("SELECT COLUMN_NAME AS name, DATA_TYPE AS type, IS_NULLABLE AS nullable, COALESCE(COLUMN_DEFAULT, '') AS \"default\", '' AS extra FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME=:table ORDER BY ORDINAL_POSITION");
+                $statement->execute(['table' => $table]);
+                foreach ($statement->fetchAll() as $column) { $column['nullable'] = strtoupper((string)$column['nullable']) === 'YES'; $columns[] = $column; }
+            }
+            echo json_encode(['columns' => $columns, 'indexes' => $indexes, 'foreign_keys' => $foreignKeys], JSON_THROW_ON_ERROR);
+        }
+        """#
+        let encodedScript = Data(script.utf8).base64EncodedString()
+        return "ABSDEV_DB_CONFIG=\(shellQuote(config)) \(shellQuote(php)) -r \(shellQuote("eval(base64_decode('\(encodedScript)'));"))"
+    }
+
     func refreshDatabaseSchema() async {
         guard let project = selectedProject else {
             databaseSchemaMessage = "Select a Laravel project first."
             return
         }
-        guard let php = await resolvePHPExecutable(in: project.path) else {
-            databaseSchemaMessage = "PHP executable could not be resolved."
+        let projectID = project.id
+
+        databaseTables = []
+        selectedDatabaseTableName = nil
+        databaseColumns = []
+        databaseIndexes = []
+        databaseForeignKeys = []
+        databaseSchemaMessage = "Connecting directly to the selected project's database…"
+        isLoadingDatabaseSchema = true
+        defer { if selectedProjectID == projectID { isLoadingDatabaseSchema = false } }
+
+        guard let php = await resolvePHPExecutable(in: project.path), selectedProjectID == projectID else {
+            if selectedProjectID == projectID { databaseSchemaMessage = "PHP executable could not be resolved." }
+            return
+        }
+        guard let identityCommand = directDatabaseCommand(php: php, project: project, operation: "identity"),
+              let tablesCommand = directDatabaseCommand(php: php, project: project, operation: "tables") else {
+            databaseSchemaMessage = "Could not construct a direct database connection."
             return
         }
 
-        isLoadingDatabaseSchema = true
-        databaseSchemaMessage = "Loading database schema…"
-        defer { isLoadingDatabaseSchema = false }
+        let identityResult = await captureResult(identityCommand, in: project.path, environmentProject: project)
+        guard selectedProjectID == projectID else { return }
+        guard identityResult.succeeded,
+              let identityData = identityResult.output.data(using: .utf8),
+              let identity = try? JSONSerialization.jsonObject(with: identityData) as? [String: Any] else {
+            databaseSchemaMessage = "Direct database connection failed for \(databaseIdentity(for: project)). \(identityResult.output.lines.prefix(4).joined(separator: " ").trimmed)"
+            return
+        }
 
-        let result = await captureResult("\(shellQuote(php)) artisan db:show --json --no-interaction", in: project.path)
+        let actualDatabase = stringValue(identity["database"])
+        let expectedDatabase = directDatabaseConfiguration(for: project)["database"] ?? ""
+        if !expectedDatabase.isEmpty,
+           expectedDatabase != ":memory:",
+           URL(fileURLWithPath: actualDatabase).lastPathComponent.caseInsensitiveCompare(URL(fileURLWithPath: expectedDatabase).lastPathComponent) != .orderedSame {
+            databaseSchemaMessage = "Database mismatch blocked: .env requests \(expectedDatabase), but the direct connection opened \(actualDatabase)."
+            return
+        }
+
+        let result = await captureResult(tablesCommand, in: project.path, environmentProject: project)
+        guard selectedProjectID == projectID else { return }
         guard result.succeeded else {
-            databaseTables = []
-            databaseSchemaMessage = "Schema listing is unavailable for this Laravel version or database connection. Run Database Console for direct access."
+            databaseSchemaMessage = "Schema listing failed for \(databaseIdentity(for: project)). \(result.output.lines.prefix(4).joined(separator: " ").trimmed)"
             return
         }
 
         let tables = parseDatabaseTablesJSON(result.output)
         databaseTables = tables.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        databaseSchemaMessage = tables.isEmpty ? "No database tables were returned." : "\(tables.count) tables loaded."
-
-        if let selected = selectedDatabaseTableName, tables.contains(where: { $0.name == selected }) {
-            await loadDatabaseTableDetails(selected)
-        } else if let first = tables.first {
+        databaseSchemaMessage = tables.isEmpty ? "No tables were found in \(databaseIdentity(for: project))." : "\(tables.count) tables loaded directly from \(databaseIdentity(for: project))."
+        if let first = databaseTables.first {
             selectedDatabaseTableName = first.name
             await loadDatabaseTableDetails(first.name)
-        } else {
-            selectedDatabaseTableName = nil
-            databaseColumns = []
-            databaseIndexes = []
-            databaseForeignKeys = []
         }
     }
 
@@ -1108,15 +1259,18 @@ final class AppStore {
     }
 
     func loadDatabaseTableDetails(_ name: String) async {
-        guard let project = selectedProject,
-              let php = await resolvePHPExecutable(in: project.path) else { return }
-        let result = await captureResult("\(shellQuote(php)) artisan db:table \(shellQuote(name)) --json --no-interaction", in: project.path)
-        guard selectedDatabaseTableName == name else { return }
+        guard let project = selectedProject else { return }
+        let projectID = project.id
+        guard let php = await resolvePHPExecutable(in: project.path),
+              selectedProjectID == projectID,
+              let command = directDatabaseCommand(php: php, project: project, operation: "details", table: name) else { return }
+        let result = await captureResult(command, in: project.path, environmentProject: project)
+        guard selectedProjectID == projectID, selectedDatabaseTableName == name else { return }
         guard result.succeeded else {
             databaseColumns = []
             databaseIndexes = []
             databaseForeignKeys = []
-            databaseSchemaMessage = "Could not inspect \(name). This command may not support JSON on the installed Laravel version."
+            databaseSchemaMessage = "Could not inspect \(name): \(result.output.lines.prefix(4).joined(separator: " ").trimmed)"
             return
         }
         parseDatabaseTableDetailsJSON(result.output)
@@ -2701,8 +2855,12 @@ final class AppStore {
         await captureResult(command, in: directory).output
     }
 
-    private func captureResult(_ command: String, in directory: String) async -> CommandResult {
-        let environment = commandEnvironment()
+    private func captureResult(
+        _ command: String,
+        in directory: String,
+        environmentProject: LaravelProject? = nil
+    ) async -> CommandResult {
+        let environment = commandEnvironment(for: environmentProject)
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let task = Process(); let pipe = Pipe()
@@ -2779,7 +2937,7 @@ final class AppStore {
         return output.lines.prefix(5).joined(separator: "\n").trimmed.nonEmpty ?? "The selected PHP executable could not run."
     }
 
-    private func commandEnvironment() -> [String: String] {
+    private func commandEnvironment(for explicitProject: LaravelProject? = nil) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let paths = [
@@ -2799,7 +2957,82 @@ final class AppStore {
         ]
         let existing = environment["PATH"] ?? ""
         environment["PATH"] = (paths + [existing]).joined(separator: ":")
+
+        // A GUI application can inherit Laravel and database variables from
+        // the environment that launched it. Merely overlaying DB_DATABASE is not
+        // sufficient: DB_URL / DATABASE_URL and provider-specific variables can
+        // take precedence inside config/database.php and silently select a
+        // different schema. Remove all project-scoped variables first, then apply
+        // only the selected project's .env values.
+        if let project = explicitProject ?? selectedProject {
+            let exactProjectKeys: Set<String> = [
+                "APP_ENV", "APP_DEBUG", "APP_URL", "APP_CONFIG_CACHE",
+                "DB_URL", "DATABASE_URL", "CLEARDB_DATABASE_URL",
+                "MYSQL_URL", "MYSQL_HOST", "MYSQL_PORT", "MYSQL_DATABASE",
+                "MYSQL_USER", "MYSQL_USERNAME", "MYSQL_PASSWORD",
+                "POSTGRES_URL", "POSTGRESQL_URL", "PGHOST", "PGPORT",
+                "PGDATABASE", "PGUSER", "PGPASSWORD"
+            ]
+            let projectPrefixes = [
+                "DB_", "REDIS_", "CACHE_", "QUEUE_", "SESSION_", "MAIL_",
+                "FILESYSTEM_", "AWS_", "MEMCACHED_", "BROADCAST_"
+            ]
+            for key in Array(environment.keys) {
+                if exactProjectKeys.contains(key) || projectPrefixes.contains(where: { key.hasPrefix($0) }) {
+                    environment.removeValue(forKey: key)
+                }
+            }
+
+            for (key, value) in projectEnvironment(at: project.path) {
+                environment[key] = value
+            }
+
+            // Laravel's cached configuration contains database values captured
+            // when `config:cache` was last run. Do not let that cache override the
+            // selected project's current .env while ABSDEV Studio is inspecting it.
+            let cacheName = "absdev-config-\(project.id.uuidString).php"
+            environment["APP_CONFIG_CACHE"] = URL(fileURLWithPath: NSTemporaryDirectory())
+                .appendingPathComponent(cacheName)
+                .path
+        }
         return environment
+    }
+
+    private func databaseIdentity(for project: LaravelProject) -> String {
+        let values = projectEnvironment(at: project.path)
+        let connection = values["DB_CONNECTION"]?.trimmed.nonEmpty ?? "database"
+        let database = values["DB_DATABASE"]?.trimmed.nonEmpty ?? "default"
+        return "\(connection):\(database)"
+    }
+
+    private func projectEnvironment(at projectPath: String) -> [String: String] {
+        let url = URL(fileURLWithPath: projectPath).appendingPathComponent(".env")
+        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return [:] }
+
+        var values: [String: String] = [:]
+        for rawLine in content.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty, !line.hasPrefix("#") else { continue }
+
+            let assignment = line.hasPrefix("export ") ? String(line.dropFirst(7)) : line
+            guard let separator = assignment.firstIndex(of: "=") else { continue }
+            let key = String(assignment[..<separator]).trimmingCharacters(in: .whitespaces)
+            guard !key.isEmpty else { continue }
+
+            var value = String(assignment[assignment.index(after: separator)...])
+                .trimmingCharacters(in: .whitespaces)
+            if value.count >= 2,
+               let first = value.first,
+               let last = value.last,
+               (first == "\"" && last == "\"") || (first == "'" && last == "'") {
+                value.removeFirst()
+                value.removeLast()
+            } else if let comment = value.range(of: " #") {
+                value = String(value[..<comment.lowerBound]).trimmingCharacters(in: .whitespaces)
+            }
+            values[key] = value
+        }
+        return values
     }
 
     private func shellQuote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
