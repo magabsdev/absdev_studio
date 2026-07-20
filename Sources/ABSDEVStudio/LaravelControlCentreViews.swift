@@ -232,7 +232,7 @@ struct LaravelControlCentreView: View {
             return [
                 a("Configuration Overview", "Inspect cache, queue, session, mail and filesystem drivers.", "switch.2", "Inspect", .artisan("about")),
                 a("Redis", "Test the configured Redis connection through Laravel.", "memorychip.fill", "Test", .artisan("tinker --execute=\"try { echo Illuminate\\Support\\Facades\\Redis::ping(); } catch (Throwable $e) { echo $e->getMessage(); }\""), available: store.projectContainsAnyPackage(["predis/predis", "ext-redis"])),
-                a("Filesystem Disks", "List configured filesystem disk names.", "externaldrive.fill", "Inspect", .shell("php -r '$c=require \"config/filesystems.php\"; echo implode(PHP_EOL,array_keys($c[\"disks\"]??[]));'")),
+                a("Filesystem Disks", "List configured filesystem disk names.", "externaldrive.fill", "Inspect", .shell("php -r 'require \"vendor/autoload.php\"; $app=require \"bootstrap/app.php\"; $app->make(Illuminate\\\\Contracts\\\\Console\\\\Kernel::class)->bootstrap(); echo implode(PHP_EOL, array_keys(config(\"filesystems.disks\", [])));'")),
                 a("Composer Packages", "Open installed framework integrations.", "shippingbox.fill", "Open", .navigate(.intelligence))
             ]
         case .testing:
@@ -304,7 +304,7 @@ struct LaravelControlCentreView: View {
                 a("Storage Link", "Create the public storage symbolic link.", "link", "Apply", .artisan("storage:link")),
                 a("Writable Paths", "Check Laravel writable directories and permissions.", "checkmark.shield.fill", "Inspect", .shell("for p in storage bootstrap/cache; do test -w \"$p\" && echo \"✓ $p writable\" || echo \"✕ $p not writable\"; done")),
                 a("Disk Usage", "Show project storage and log sizes.", "chart.bar.doc.horizontal", "Inspect", .shell("du -sh storage storage/logs 2>/dev/null || true")),
-                a("Configured Disks", "List Laravel filesystem disks.", "externaldrive.fill", "Inspect", .shell("php -r '$c=require \"config/filesystems.php\"; print_r(array_keys($c[\"disks\"]??[]));'")),
+                a("Configured Disks", "List Laravel filesystem disks.", "externaldrive.fill", "Inspect", .shell("php -r 'require \"vendor/autoload.php\"; $app=require \"bootstrap/app.php\"; $app->make(Illuminate\\\\Contracts\\\\Console\\\\Kernel::class)->bootstrap(); echo implode(PHP_EOL, array_keys(config(\"filesystems.disks\", [])));'")),
                 a("Clear Compiled Views", "Remove compiled Blade templates.", "trash", "Clear", .artisan("view:clear"))
             ]
         case .apiCentre:

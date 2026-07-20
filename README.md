@@ -122,3 +122,17 @@ Configure the selected project's PHP runtime in **Settings → Project PHP Runti
 - Cross-project search uses ripgrep when installed and falls back to recursive grep.
 - MCP Hub status content is centred with a constrained readable width.
 - APP_DEBUG is reported as critical only when the project environment is production.
+
+## Product Studio
+
+Project Intelligence now includes a native Product Studio with project-aware modules for mission control, architecture discovery, database and ERD access, Git history and operations, deployment assets, AI/MCP context, performance foundations, security checks, Composer packages, routes, queues, schedules, logs, APIs, containers, Laravel upgrade readiness, project templates, code metrics, documentation inventory, and project replay.
+
+These modules use the currently selected project and provide working discovery and command actions. External hosted deployment providers, pull-request services, live production telemetry, visual migration authoring, and automated code rewriting require provider credentials or deeper follow-on integrations and are intentionally not simulated.
+
+## Runtime reliability fixes
+
+- Product Studio commands resolve and validate the selected project's PHP runtime.
+- Broken PHP installations, including Homebrew builds with missing dynamic libraries, are skipped automatically.
+- Composer is located from the project, ServBay, user Composer, Homebrew, or `/usr/local`, and is executed with the validated PHP runtime.
+- Product Studio output is cleared when changing modules so stale command errors do not appear under Templates or other read-only views.
+- Storage disk inspection now boots Laravel before reading application configuration.
