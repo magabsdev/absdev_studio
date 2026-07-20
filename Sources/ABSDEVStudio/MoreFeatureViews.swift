@@ -27,7 +27,7 @@ struct DatabaseView: View {
                 .buttonStyle(.borderedProminent)
             }
             .padding(.horizontal, 28)
-            .padding(.top, 24)
+            .padding(.top, 12)
             .padding(.bottom, 18)
 
             HStack(spacing: 14) {
@@ -131,6 +131,7 @@ struct DatabaseView: View {
                 .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .confirmationDialog("Rebuild the database?", isPresented: $confirmFresh) {
             Button("Run migrate:fresh --seed", role: .destructive) { run("migrate:fresh --seed") }
             Button("Cancel", role: .cancel) {}
@@ -148,18 +149,24 @@ struct DatabaseView: View {
     }
 
     private var databaseDisplayName: String {
-        let connection = environmentValue("DB_CONNECTION", fallback: "")
-        let database = environmentValue("DB_DATABASE", fallback: "Not configured")
-        guard connection == "sqlite", database != "Not configured" else { return database }
+        let connection = environmentValue("DB_CONNECTION", fallback: "").lowercased()
+        var database = environmentValue("DB_DATABASE", fallback: "")
+        if connection == "sqlite", database.isEmpty || database == "default" {
+            database = "database/database.sqlite"
+        }
+        guard connection == "sqlite" else { return database.isEmpty ? "Not configured" : database }
         if database == ":memory:" { return database }
         return URL(fileURLWithPath: database).lastPathComponent
     }
 
     private var databaseLocationDetail: String {
-        let connection = environmentValue("DB_CONNECTION", fallback: "")
-        let database = environmentValue("DB_DATABASE", fallback: "")
-        if connection == "sqlite", !database.isEmpty {
-            return database.hasPrefix("/") ? database : "Relative to project root"
+        let connection = environmentValue("DB_CONNECTION", fallback: "").lowercased()
+        var database = environmentValue("DB_DATABASE", fallback: "")
+        if connection == "sqlite", database.isEmpty || database == "default" {
+            database = "database/database.sqlite"
+        }
+        if connection == "sqlite" {
+            return database.hasPrefix("/") ? database : database
         }
         let host = environmentValue("DB_HOST", fallback: "localhost")
         let port = environmentValue("DB_PORT", fallback: "")

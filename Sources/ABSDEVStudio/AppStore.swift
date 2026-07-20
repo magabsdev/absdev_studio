@@ -1066,10 +1066,20 @@ final class AppStore {
 
     private func directDatabaseConfiguration(for project: LaravelProject) -> [String: String] {
         let values = projectEnvironment(at: project.path)
-        let connection = values["DB_CONNECTION"]?.trimmed.nonEmpty ?? "mysql"
+        let connection = values["DB_CONNECTION"]?.trimmed.nonEmpty?.lowercased() ?? "mysql"
         var database = values["DB_DATABASE"]?.trimmed ?? ""
-        if connection == "sqlite", !database.isEmpty, database != ":memory:", !database.hasPrefix("/") {
-            database = URL(fileURLWithPath: project.path).appendingPathComponent(database).standardizedFileURL.path
+        if connection == "sqlite" {
+            // Laravel's default SQLite database is database/database.sqlite when
+            // DB_DATABASE is omitted. Resolve it explicitly rather than opening
+            // PDO's empty/default SQLite target.
+            if database.isEmpty || database == "default" {
+                database = "database/database.sqlite"
+            }
+            if database != ":memory:", !database.hasPrefix("/") {
+                database = URL(fileURLWithPath: project.path)
+                    .appendingPathComponent(database)
+                    .standardizedFileURL.path
+            }
         }
         return [
             "connection": connection,
@@ -1138,15 +1148,15 @@ final class AppStore {
 
         if ($operation === 'tables') {
             if ($driver === 'sqlite') {
-                $rows = $pdo->query("SELECT name, '' AS size, '' AS rows FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")->fetchAll();
+                $rows = $pdo->query("SELECT name, '' AS size, '' AS row_count FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")->fetchAll();
             } elseif ($driver === 'pgsql' || $driver === 'postgres' || $driver === 'postgresql') {
-                $statement = $pdo->prepare("SELECT tablename AS name, '' AS size, '' AS rows FROM pg_catalog.pg_tables WHERE schemaname = current_schema() ORDER BY tablename");
+                $statement = $pdo->prepare("SELECT tablename AS name, '' AS size, '' AS row_count FROM pg_catalog.pg_tables WHERE schemaname = current_schema() ORDER BY tablename");
                 $statement->execute();
                 $rows = $statement->fetchAll();
             } elseif ($driver === 'sqlsrv') {
-                $rows = $pdo->query("SELECT TABLE_NAME AS name, '' AS size, '' AS rows FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE' AND TABLE_CATALOG=DB_NAME() ORDER BY TABLE_NAME")->fetchAll();
+                $rows = $pdo->query("SELECT TABLE_NAME AS name, '' AS size, '' AS row_count FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE' AND TABLE_CATALOG=DB_NAME() ORDER BY TABLE_NAME")->fetchAll();
             } else {
-                $statement = $pdo->prepare("SELECT TABLE_NAME AS name, COALESCE(TABLE_ROWS, 0) AS rows, CONCAT(ROUND((DATA_LENGTH + INDEX_LENGTH) / 1024 / 1024, 2), ' MB') AS size FROM information_schema.TABLES WHERE TABLE_SCHEMA = :database ORDER BY TABLE_NAME");
+                $statement = $pdo->prepare("SELECT TABLE_NAME AS name, COALESCE(TABLE_ROWS, 0) AS row_count, CONCAT(ROUND((DATA_LENGTH + INDEX_LENGTH) / 1024 / 1024, 2), ' MB') AS size FROM information_schema.TABLES WHERE TABLE_SCHEMA = :database ORDER BY TABLE_NAME");
                 $statement->execute(['database' => $database]);
                 $rows = $statement->fetchAll();
             }
