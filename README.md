@@ -112,3 +112,13 @@ Project Intelligence now includes an **Entity Diagrams** workspace. For Laravel 
 - Native macOS printing
 
 Configure the selected project's PHP runtime in **Settings → Project PHP Runtime** before loading a live schema. ABSDEV Studio stores the detected executable and its source separately for each project.
+
+## July 2026 Project Intelligence fixes
+
+- Fixed Knowledge Base permanent-delete confirmation state ownership.
+- Removed the default Swift Verify automation and filters it from existing saved workflows.
+- Health Audit resolves Composer from project, ServBay, Homebrew, and user locations.
+- Workspace workflows resolve project PHP and Composer executables explicitly.
+- Cross-project search uses ripgrep when installed and falls back to recursive grep.
+- MCP Hub status content is centred with a constrained readable width.
+- APP_DEBUG is reported as critical only when the project environment is production.

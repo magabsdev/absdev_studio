@@ -61,7 +61,8 @@ final class ProjectIntelligenceSuiteModel {
     func load(project: LaravelProject?) {
         guard let project else { return }
         memories = loadJSON([ProjectMemoryRecord].self, at: memoryURL(project.id)) ?? []
-        workflows = loadJSON([WorkspaceWorkflow].self, at: workflowsURL()) ?? Self.defaultWorkflows
+        workflows = (loadJSON([WorkspaceWorkflow].self, at: workflowsURL()) ?? Self.defaultWorkflows)
+            .filter { $0.name != "Swift Verify" }
         Task { await refreshGraph(project: project); await refreshTimeline(project: project) }
     }
 
@@ -101,7 +102,7 @@ final class ProjectIntelligenceSuiteModel {
 
     func runAudit(project: LaravelProject) async {
         isBusy = true; status = "Running health audit…"
-        findings = await Task.detached { Self.audit(path: project.path) }.value
+        findings = await Task.detached { Self.audit(project: project) }.value
         status = findings.isEmpty ? "No material findings" : "Audit found \(findings.count) items"
         isBusy = false
     }
@@ -117,8 +118,9 @@ final class ProjectIntelligenceSuiteModel {
     func runWorkflow(_ workflow: WorkspaceWorkflow, project: LaravelProject) async {
         isBusy = true; workflowOutput = "$ cd \(project.path)\n"
         for command in workflow.commands {
-            workflowOutput += "\n$ \(command)\n"
-            let result = await Task.detached { Self.runShell(command, cwd: project.path) }.value
+            let resolvedCommand = Self.resolveWorkflowCommand(command, project: project)
+            workflowOutput += "\n$ \(resolvedCommand)\n"
+            let result = await Task.detached { Self.runShell(resolvedCommand, cwd: project.path) }.value
             workflowOutput += result.output
             if result.status != 0 { workflowOutput += "\nStopped with exit code \(result.status).\n"; break }
         }
@@ -129,8 +131,7 @@ final class ProjectIntelligenceSuiteModel {
 
     private static var defaultWorkflows: [WorkspaceWorkflow] {[
         WorkspaceWorkflow(name: "Laravel Refresh", commands: ["git pull --ff-only", "composer install", "php artisan migrate --force", "npm install", "npm run build", "php artisan test"]),
-        WorkspaceWorkflow(name: "Swift Verify", commands: ["git pull --ff-only", "swift package resolve", "swift test", "swift build"]),
-        WorkspaceWorkflow(name: "Quick Test", commands: ["php artisan test || swift test"])
+        WorkspaceWorkflow(name: "Quick Test", commands: ["php artisan test"])
     ]}
 
     nonisolated private static func gitTimeline(path: String) -> [ProjectTimelineEntry] {
@@ -143,7 +144,8 @@ final class ProjectIntelligenceSuiteModel {
         }
     }
 
-    nonisolated private static func audit(path: String) -> [ProjectAuditFinding] {
+    nonisolated private static func audit(project: LaravelProject) -> [ProjectAuditFinding] {
+        let path = project.path
         let root = URL(fileURLWithPath: path)
         var f: [ProjectAuditFinding] = []
         func exists(_ p: String) -> Bool { FileManager.default.fileExists(atPath: root.appendingPathComponent(p).path) }
@@ -151,12 +153,20 @@ final class ProjectIntelligenceSuiteModel {
         if exists("composer.json") {
             if !exists("composer.lock") { f.append(.init(severity: .high, title: "Composer lock file missing", detail: "Reproducible dependency installation cannot be guaranteed.", path: "composer.lock")) }
             let env = text(".env")
-            if env.contains("APP_DEBUG=true") { f.append(.init(severity: .high, title: "Application debug enabled", detail: "Disable APP_DEBUG outside local development.", path: ".env")) }
-            if env.contains("APP_ENV=production") && env.contains("APP_DEBUG=true") { f.append(.init(severity: .critical, title: "Production debug exposure", detail: "Production is configured with debug output enabled.", path: ".env")) }
+            let isProduction = env.contains("APP_ENV=production")
+            if isProduction && env.contains("APP_DEBUG=true") {
+                f.append(.init(severity: .critical, title: "Production debug exposure", detail: "Production is configured with debug output enabled.", path: ".env"))
+            }
             if !exists("tests") && !exists("Tests") { f.append(.init(severity: .medium, title: "No test directory detected", detail: "Add automated coverage for critical application behaviour.", path: nil)) }
             if exists("package.json") && !exists("package-lock.json") && !exists("pnpm-lock.yaml") && !exists("yarn.lock") { f.append(.init(severity: .medium, title: "Frontend lock file missing", detail: "Commit a package-manager lock file.", path: "package.json")) }
-            let audit = runShell("composer audit --no-interaction", cwd: path)
-            if audit.status != 0 { f.append(.init(severity: .high, title: "Composer security audit failed", detail: String(audit.output.prefix(1500)), path: "composer.lock")) }
+            if let composer = composerExecutable(projectPath: path) {
+                let php = phpExecutable(for: project)
+                let command = composer.hasSuffix(".phar") ? "\(shellQuote(php)) \(shellQuote(composer)) audit --no-interaction" : "\(shellQuote(composer)) audit --no-interaction"
+                let audit = runShell(command, cwd: path)
+                if audit.status != 0 { f.append(.init(severity: .high, title: "Composer security audit failed", detail: String(audit.output.prefix(1500)), path: "composer.lock")) }
+            } else {
+                f.append(.init(severity: .medium, title: "Composer executable not found", detail: "Configure Composer or install it in ServBay, Homebrew, /usr/local, or the project root. The security audit was skipped.", path: "composer.lock"))
+            }
         }
         if exists("Package.swift") {
             if !exists("Tests") { f.append(.init(severity: .medium, title: "Swift tests missing", detail: "No Tests directory was detected.", path: nil)) }
@@ -172,7 +182,12 @@ final class ProjectIntelligenceSuiteModel {
         let escaped = query.replacingOccurrences(of: "'", with: "'\\''")
         var results: [WorkspaceSearchResult] = []
         for project in projects {
-            let command = "rg -n -i --hidden --glob '!vendor/**' --glob '!node_modules/**' --glob '!.git/**' --glob '!DerivedData/**' --max-count 30 '\(escaped)' ."
+            let command: String
+            if let rg = executable(named: "rg") {
+                command = "\(shellQuote(rg)) -n -i --hidden --glob '!vendor/**' --glob '!node_modules/**' --glob '!.git/**' --glob '!DerivedData/**' --max-count 30 '\(escaped)' ."
+            } else {
+                command = "grep -RIn --exclude-dir=vendor --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=DerivedData -- '\(escaped)' . | head -n 100"
+            }
             let output = runShell(command, cwd: project.path).output
             for line in output.split(separator: "\n").prefix(100) {
                 let parts = line.split(separator: ":", maxSplits: 2).map(String.init)
@@ -184,11 +199,62 @@ final class ProjectIntelligenceSuiteModel {
         return results
     }
 
+    nonisolated private static func resolveWorkflowCommand(_ command: String, project: LaravelProject) -> String {
+        var resolved = command
+        let php = shellQuote(phpExecutable(for: project))
+        if resolved == "php" || resolved.hasPrefix("php ") {
+            resolved = php + resolved.dropFirst(3)
+        }
+        if resolved == "composer" || resolved.hasPrefix("composer ") {
+            if let composer = composerExecutable(projectPath: project.path) {
+                let composerCommand = composer.hasSuffix(".phar") ? "\(php) \(shellQuote(composer))" : shellQuote(composer)
+                resolved = composerCommand + resolved.dropFirst("composer".count)
+            }
+        }
+        return resolved
+    }
+
+    nonisolated private static func phpExecutable(for project: LaravelProject) -> String {
+        if let configured = project.phpExecutablePath, FileManager.default.isExecutableFile(atPath: configured) { return configured }
+        return executable(named: "php") ?? "/usr/bin/php"
+    }
+
+    nonisolated private static func composerExecutable(projectPath: String) -> String? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let candidates = [
+            URL(fileURLWithPath: projectPath).appendingPathComponent("composer.phar").path,
+            "/Applications/ServBay/package/composer/current/bin/composer",
+            "/Applications/ServBay/bin/composer",
+            "\(home)/.composer/vendor/bin/composer",
+            "/opt/homebrew/bin/composer",
+            "/usr/local/bin/composer"
+        ]
+        return candidates.first { FileManager.default.fileExists(atPath: $0) }
+    }
+
+    nonisolated private static func executable(named name: String) -> String? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let directories = [
+            "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin",
+            "/Applications/ServBay/bin", "\(home)/.local/bin", "\(home)/bin"
+        ]
+        return directories.map { URL(fileURLWithPath: $0).appendingPathComponent(name).path }
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+
+    nonisolated private static func shellQuote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
     nonisolated private static func runShell(_ command: String, cwd: String) -> (status: Int32, output: String) {
         let p = Process(); let pipe = Pipe()
         p.executableURL = URL(fileURLWithPath: "/bin/zsh")
         p.arguments = ["-lc", command]
         p.currentDirectoryURL = URL(fileURLWithPath: cwd)
+        var environment = ProcessInfo.processInfo.environment
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        environment["PATH"] = ["/opt/homebrew/bin", "/usr/local/bin", "/Applications/ServBay/bin", "\(home)/.local/bin", "\(home)/bin", environment["PATH"] ?? "/usr/bin:/bin"].joined(separator: ":")
+        p.environment = environment
         p.standardOutput = pipe; p.standardError = pipe
         do { try p.run(); p.waitUntilExit() } catch { return (-1, error.localizedDescription) }
         return (p.terminationStatus, String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "")
@@ -228,7 +294,30 @@ struct ProjectIntelligenceView: View {
     private var graphView: some View { VStack { HStack { Text("\(model.graphSymbols.count) symbols · \(model.graphEdges.count) dependencies").foregroundStyle(.secondary); Spacer(); Button("Rebuild Graph", systemImage:"arrow.clockwise") { if let p=store.selectedProject { Task { await model.refreshGraph(project:p) } } } }.padding(); Table(model.graphSymbols) { TableColumn("Kind", value:\.kind); TableColumn("Symbol", value:\.name); TableColumn("File", value:\.path); TableColumn("Line") { Text("\($0.line)") } } } }
     private var timelineView: some View { VStack { HStack { Spacer(); Button("Refresh", systemImage:"arrow.clockwise") { if let p=store.selectedProject { Task { await model.refreshTimeline(project:p) } } } }.padding(); List(model.timeline) { e in HStack(alignment:.top) { Text(e.date, style:.date).frame(width:100,alignment:.leading); VStack(alignment:.leading) { Text(e.title).font(.headline); Text("\(e.kind) · \(e.detail)").font(.caption).foregroundStyle(.secondary) } } } } }
     private var auditView: some View { VStack { HStack { Text("Laravel, Swift, dependency, environment, testing, and repository checks.").foregroundStyle(.secondary); Spacer(); Button("Run Full Audit", systemImage:"stethoscope") { if let p=store.selectedProject { Task { await model.runAudit(project:p) } } }.buttonStyle(.borderedProminent) }.padding(); List(model.findings) { f in VStack(alignment:.leading,spacing:5) { HStack { Text(f.severity.rawValue.uppercased()).font(.caption.bold()); Text(f.title).font(.headline); Spacer(); if let path=f.path { Text(path).font(.caption.monospaced()).foregroundStyle(.secondary) } }; Text(f.detail).foregroundStyle(.secondary).textSelection(.enabled) } } } }
-    private var mcpView: some View { ScrollView { VStack(alignment:.leading,spacing:18) { ContentUnavailableView("Native MCP Hub is active", systemImage:"server.rack", description:Text("The embedded server already synchronises navigator projects, maintains per-project indexes, exposes project-aware search and reasoning tools, and records diagnostics.")); GroupBox("Workspace tools") { Text("projects_list · ask_project · project_search · semantic_search · find_definition · find_references · project_dependency_graph · project_git_status · run_project_tests").font(.body.monospaced()).textSelection(.enabled) }; Button("Open MCP Tools", systemImage:"network") { store.selectedSection = .mcp } }.padding(24) } }
+    private var mcpView: some View {
+        ScrollView {
+            VStack(spacing: 22) {
+                ContentUnavailableView(
+                    "Native MCP Hub is active",
+                    systemImage: "server.rack",
+                    description: Text("The embedded server already synchronises navigator projects, maintains per-project indexes, exposes project-aware search and reasoning tools, and records diagnostics.")
+                )
+                .frame(maxWidth: 620)
+
+                GroupBox("Workspace tools") {
+                    Text("projects_list · ask_project · project_search · semantic_search · find_definition · find_references · project_dependency_graph · project_git_status · run_project_tests")
+                        .font(.body.monospaced())
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: 900)
+
+                Button("Open MCP Tools", systemImage: "network") { store.selectedSection = .mcp }
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(24)
+        }
+    }
     private var automationView: some View { HSplitView { List(model.workflows, selection: .constant(nil as UUID?)) { w in VStack(alignment:.leading) { Text(w.name).font(.headline); Text(w.commands.joined(separator:" → ")).font(.caption).foregroundStyle(.secondary).lineLimit(2); Button("Run", systemImage:"play.fill") { if let p=store.selectedProject { Task { await model.runWorkflow(w,project:p) } } }.padding(.top,4) } }.frame(minWidth:340); ScrollView { Text(model.workflowOutput.isEmpty ? "Workflow output will appear here." : model.workflowOutput).font(.system(.body,design:.monospaced)).textSelection(.enabled).frame(maxWidth:.infinity,alignment:.topLeading).padding() } } }
     private var searchView: some View { VStack { HStack { TextField("Search classes, routes, migrations, translations, views, endpoints…", text:$query).textFieldStyle(.roundedBorder).onSubmit { Task { await model.search(projects:store.projects,query:query) } }; Button("Search All Projects", systemImage:"magnifyingglass") { Task { await model.search(projects:store.projects,query:query) } }.buttonStyle(.borderedProminent) }.padding(); Table(model.searchResults) { TableColumn("Project",value:\.project).width(min:100,ideal:140); TableColumn("File",value:\.path).width(min:220,ideal:360); TableColumn("Line") { Text("\($0.line)") }.width(55); TableColumn("Match",value:\.excerpt) } } }
 }

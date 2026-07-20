@@ -12,15 +12,60 @@ struct OverviewView: View {
                 PageHeader(title: "Project Overview", subtitle: "A live view of your Laravel development environment.")
 
                 if let project = store.selectedProject {
-                    HStack(spacing: 12) {
-                        StatusPill(text: store.isDevelopmentRunning ? "Development running" : "Development stopped", active: store.isDevelopmentRunning)
-                        Text(project.path)
-                            .font(.callout.monospaced())
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                        Spacer()
-                        Button("Open \(project.appURL)") { store.openBrowser() }
+                    HStack(alignment: .center, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 10) {
+                                StatusPill(
+                                    text: store.isDevelopmentRunning ? "Development running" : "Development stopped",
+                                    active: store.isDevelopmentRunning
+                                )
+
+                                Text(project.path)
+                                    .font(.callout.monospaced())
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+
+                            Button("Open \(project.appURL)") { store.openBrowser() }
+                                .buttonStyle(.link)
+                        }
+
+                        Spacer(minLength: 16)
+
+                        HStack(spacing: 10) {
+                            Button {
+                                store.toggleDevelopment()
+                            } label: {
+                                Label(
+                                    store.isDevelopmentRunning ? "Stop" : "Run",
+                                    systemImage: store.isDevelopmentRunning ? "stop.fill" : "play.fill"
+                                )
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                            .tint(store.isDevelopmentRunning ? .red : .green)
+                            .disabled(store.isBusy)
+                            .help(store.isDevelopmentRunning ? "Stop the selected project's development services" : "Start the selected project's development services")
+
+                            Menu {
+                                Button("Open in Browser", systemImage: "safari") { store.openBrowser() }
+                                Button("Open in Terminal", systemImage: "terminal") { store.openInTerminal() }
+                                Button("Open in Editor", systemImage: "hammer") { store.openInEditor() }
+                                Divider()
+                                Button("Reveal in Finder", systemImage: "folder") { store.revealInFinder() }
+                            } label: {
+                                Image(systemName: "ellipsis.circle.fill")
+                                    .font(.title2)
+                                    .symbolRenderingMode(.hierarchical)
+                            }
+                            .menuStyle(.borderlessButton)
+                            .fixedSize()
+                            .help("More project actions")
+                        }
                     }
+                    .padding(16)
+                    .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
 
                     LazyVGrid(columns: columns, spacing: 14) {
                         MetricCard(title: "Laravel", value: project.laravelVersion, detail: "Framework version", symbol: "shippingbox.fill")

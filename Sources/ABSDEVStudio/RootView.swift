@@ -26,30 +26,6 @@ struct RootView: View {
                 }
             }
 
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button {
-                    store.toggleDevelopment()
-                } label: {
-                    Label(
-                        store.isDevelopmentRunning ? "Stop Development" : "Start Development",
-                        systemImage: store.isDevelopmentRunning ? "stop.fill" : "play.fill"
-                    )
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(store.isDevelopmentRunning ? .red : .green)
-
-                Menu {
-                    Button("Open in Browser") { store.openBrowser() }
-                    Button("Open in Terminal") { store.openInTerminal() }
-                    Button("Open in Editor") { store.openInEditor() }
-                    Divider()
-                    Button("Reveal in Finder") { store.revealInFinder() }
-                } label: {
-                    Image(systemName: "ellipsis.circle.fill")
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(Color.infoBlue)
-                }
-            }
         }
             .sheet(item: $store.testFailureReport) { report in
                 TestFailureDialog(report: report)
@@ -110,6 +86,10 @@ private struct SidebarView: View {
                             return true
                         }
                         .contextMenu {
+                            Button("Rename Project…", systemImage: "pencil") {
+                                store.renameProject(project.id)
+                            }
+                            Divider()
                             Button("Customize Project Icon…", systemImage: "paintpalette.fill") {
                                 projectBeingCustomized = project
                             }

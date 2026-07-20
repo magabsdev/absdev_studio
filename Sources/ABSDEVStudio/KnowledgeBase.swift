@@ -527,6 +527,37 @@ struct KBManifest: Codable {
     if let favorite { d.isFavorite = favorite }
     d.updatedAt = Date()
     saveNow()
+    // NSManagedObject property changes are not observed reliably by every SwiftUI
+    // host used by this view. Re-fetching publishes a new documents array so the
+    // toolbar star and navigator row update immediately.
+    reload()
+  }
+
+  func toggleFavorite(documentID: UUID) {
+    saver?.cancel()
+    saver = nil
+
+    let request = NSFetchRequest<KBDocument>(entityName: "KBDocument")
+    request.fetchLimit = 1
+    request.predicate = NSPredicate(
+      format: "projectID == %@ AND id == %@",
+      projectID as CVarArg,
+      documentID as CVarArg
+    )
+
+    do {
+      guard let document = try context.fetch(request).first else { return }
+      document.isFavorite.toggle()
+      document.updatedAt = Date()
+      try context.save()
+      selection = documentID
+      status = "Saved"
+      reload()
+    } catch {
+      context.rollback()
+      reload()
+      self.error = error.localizedDescription
+    }
   }
 
   func createVersionSnapshot() {
@@ -857,6 +888,7 @@ private struct KBWorkspace: View {
   @State private var inspectorVisible = false
   @State private var commandPaletteVisible = false
   @State private var paletteSearch = ""
+  @State private var pendingPermanentDeleteID: UUID?
 
   var body: some View {
     VStack(spacing: 0) {
@@ -898,7 +930,23 @@ private struct KBWorkspace: View {
       }
       Button("Cancel", role: .cancel) { pendingDeleteID = nil }
     } message: {
-      Text("The document and all of its attachments will be permanently deleted.")
+      Text("The document will be moved to Trash. You can restore it later or delete it permanently from Trash.")
+    }
+    .alert(
+      "Delete Permanently?",
+      isPresented: Binding(
+        get: { pendingPermanentDeleteID != nil },
+        set: { if !$0 { pendingPermanentDeleteID = nil } }
+      )
+    ) {
+      Button("Delete Permanently", role: .destructive) {
+        guard let documentID = pendingPermanentDeleteID else { return }
+        pendingPermanentDeleteID = nil
+        store.permanentlyDelete(documentID: documentID)
+      }
+      Button("Cancel", role: .cancel) { pendingPermanentDeleteID = nil }
+    } message: {
+      Text("This document and all of its attachments will be removed permanently. This action cannot be undone.")
     }
     .alert(
       "Knowledge Base Error",
@@ -1108,7 +1156,7 @@ private struct KBWorkspace: View {
               if store.showingTrash {
                 Button("Restore") { store.restore(documentID: document.id) }
                 Button("Delete Permanently", role: .destructive) {
-                  store.permanentlyDelete(documentID: document.id)
+                  pendingPermanentDeleteID = document.id
                 }
               } else {
                 Button("Move to Trash", role: .destructive) {
@@ -1198,7 +1246,7 @@ private struct KBWorkspace: View {
             Spacer()
 
             Button {
-              store.updateMetadata(favorite: !document.isFavorite)
+              store.toggleFavorite(documentID: document.id)
             } label: {
               Image(systemName: document.isFavorite ? "star.fill" : "star")
             }
@@ -1260,18 +1308,36 @@ private struct KBWorkspace: View {
             .keyboardShortcut("s", modifiers: .command)
             .fixedSize(horizontal: true, vertical: false)
 
-            Button(role: .destructive) {
-              pendingDeleteID = document.id
-            } label: {
-              Label("Move to Trash", systemImage: "trash")
+            if document.isTrashed {
+              Button {
+                store.restore(documentID: document.id)
+              } label: {
+                Label("Restore", systemImage: "arrow.uturn.backward")
+              }
+              .buttonStyle(.borderedProminent)
+              .fixedSize(horizontal: true, vertical: false)
+
+              Button(role: .destructive) {
+                pendingPermanentDeleteID = document.id
+              } label: {
+                Label("Delete Permanently", systemImage: "trash.slash")
+              }
+              .buttonStyle(.bordered)
+              .fixedSize(horizontal: true, vertical: false)
+            } else {
+              Button(role: .destructive) {
+                pendingDeleteID = document.id
+              } label: {
+                Label("Move to Trash", systemImage: "trash")
+              }
+              .buttonStyle(.bordered)
+              .keyboardShortcut(.delete, modifiers: .command)
+              .fixedSize(horizontal: true, vertical: false)
+              .disabled(!store.canDeleteSelected)
+              .help(
+                store.canDeleteSelected
+                  ? "Move this document to Trash" : "Save the document before moving it to Trash")
             }
-            .buttonStyle(.bordered)
-            .keyboardShortcut(.delete, modifiers: .command)
-            .fixedSize(horizontal: true, vertical: false)
-            .disabled(!store.canDeleteSelected)
-            .help(
-              store.canDeleteSelected
-                ? "Delete this saved document" : "Save the document before deleting it")
 
 
             Button {

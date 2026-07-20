@@ -423,6 +423,33 @@ final class AppStore {
         }
     }
 
+    func renameProject(_ projectID: LaravelProject.ID) {
+        guard let index = projects.firstIndex(where: { $0.id == projectID }) else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Rename Project"
+        alert.informativeText = "This changes only the project alias shown in ABSDEV Studio. The folder on disk will not be renamed."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(string: projects[index].name)
+        field.placeholderString = "Project alias"
+        field.frame = NSRect(x: 0, y: 0, width: 360, height: 24)
+        alert.accessoryView = field
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let alias = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !alias.isEmpty else {
+            showAlert(title: "Project name required", message: "Enter a project alias before saving.")
+            return
+        }
+
+        projects[index].name = alias
+        saveProjects()
+        statusMessage = "Renamed project to \(alias)"
+    }
+
     func moveProject(_ projectID: LaravelProject.ID, before targetID: LaravelProject.ID) {
         guard projectID != targetID,
               let sourceIndex = projects.firstIndex(where: { $0.id == projectID }),
