@@ -85,3 +85,17 @@ The embedded server exposes `ask_project` as the primary natural-language source
 ```
 
 When exactly one MCP project is enabled, `project` may be omitted. Supporting read-only tools include `find_definition`, `find_references`, `project_overview`, `project_git_status`, `project_laravel_routes`, `project_tests`, and `project_index_status`.
+
+## Project Intelligence Suite
+
+The Project Intelligence workspace now provides seven coordinated native capabilities:
+
+- Persistent AI memory scoped by the navigator project's stable UUID.
+- A local symbol and dependency knowledge graph backed by the embedded MCP index.
+- A Git repository timeline showing recent commits.
+- One-click Laravel, Swift, dependency, environment, test, and repository health checks.
+- A native MCP Hub linked to the embedded project-aware MCP server.
+- Saved Laravel and Swift workflows with streamed command output and stop-on-failure behaviour.
+- Cross-project source search excluding generated, vendor, node_modules, Git, and DerivedData content.
+
+Project data is stored under `~/Library/Application Support/ABSDEVStudio/ProjectIntelligence` and does not rename or alter source project folders.

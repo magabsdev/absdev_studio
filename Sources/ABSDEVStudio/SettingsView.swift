@@ -58,7 +58,7 @@ struct SettingsView: View {
                     SettingsSection(title: "Project Behaviour", subtitle: "ABSDEV Studio stores project references in Application Support.") {
                         VStack(alignment: .leading, spacing: 12) {
                             Label("Development services are stopped explicitly from the toolbar or Development screen.", systemImage: "stop.circle")
-                            Label("Commands run with an expanded developer PATH containing ServBay, Homebrew, Volta and system tools.", systemImage: "terminal")
+                            Label("Commands run with an expanded developer PATH containing ServBay, Homebrew, Vite and system tools.", systemImage: "terminal")
                             Divider()
                             Text("Current status: \(store.statusMessage)").foregroundStyle(.secondary)
                         }

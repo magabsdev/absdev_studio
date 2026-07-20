@@ -549,7 +549,7 @@ struct TerminalWorkspaceView: View {
     }
 }
 
-struct ProjectIntelligenceView: View {
+struct LegacyProjectCapabilitiesView: View {
     @Environment(AppStore.self) private var store
     @State private var installedOnly = true
     @State private var search = ""

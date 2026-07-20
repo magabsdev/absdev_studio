@@ -17,7 +17,7 @@ struct CommandPaletteItem: Identifiable, Hashable {
     let kind: Kind
 }
 
-struct LaravelProject: Identifiable, Hashable, Codable {
+struct LaravelProject: Identifiable, Hashable, Codable, Sendable {
     var id = UUID()
     var name: String
     var path: String

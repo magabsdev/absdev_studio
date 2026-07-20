@@ -1,11 +1,14 @@
 import Foundation
 
-struct MCPIndexedSymbol: Codable, Hashable, Sendable {
+struct MCPIndexedSymbol: Codable, Hashable, Identifiable, Sendable {
     let name: String
     let kind: String
     let path: String
     let line: Int
     let signature: String
+
+    /// Stable row identity for SwiftUI tables and lists.
+    var id: String { "\(path):\(line):\(kind):\(name)" }
 }
 
 struct MCPIndexedDocument: Codable, Hashable, Sendable {
@@ -331,7 +334,7 @@ final class MCPProjectIntelligence: @unchecked Sendable {
         try? JSONDecoder().decode(MCPProjectIndexSnapshot.self, from: Data(contentsOf: indexURL(projectID: projectID)))
     }
 
-    private func discoverProjectFiles(project: MCPProjectDefinition, maximumBytes: Int = 1_500_000) throws -> [(URL, String)] {
+    func discoverProjectFiles(project: MCPProjectDefinition, maximumBytes: Int = 1_500_000) throws -> [(URL, String)] {
         let root = URL(fileURLWithPath: NSString(string: project.rootPath).expandingTildeInPath, isDirectory: true)
             .standardizedFileURL.resolvingSymlinksInPath()
         var isDirectory: ObjCBool = false
