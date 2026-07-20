@@ -168,6 +168,9 @@ final class AppStore {
         loadProjects()
         if projects.isEmpty { projects = [.sample] }
         selectedProjectID = projects.first?.id
+        openWebUI.activeProject = selectedProject
+        lmStudio.activeProject = selectedProject
+        openWebUI.mcp.embeddedServer.setActiveNavigatorProject(selectedProject)
         if performsStartupDiscovery {
             Task { await refreshProject() }
         }
@@ -177,14 +180,13 @@ final class AppStore {
         stopAllProcesses()
         resetProjectScopedState()
 
+        openWebUI.activeProject = selectedProject
+        lmStudio.activeProject = selectedProject
+        openWebUI.mcp.embeddedServer.setActiveNavigatorProject(selectedProject)
+
         guard selectedProject != nil else {
             statusMessage = "No project selected"
             return
-        }
-
-        if let id = selectedProjectID, let index = projects.firstIndex(where: { $0.id == id }) {
-            projects[index].lastOpenedAt = Date()
-            saveProjects()
         }
 
         // Populate .env-backed screens immediately, then perform the slower
@@ -810,27 +812,20 @@ final class AppStore {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        _ = addProject(at: url, showValidationAlert: true)
-    }
 
-    @discardableResult
-    func addProject(at url: URL, showValidationAlert: Bool = false) -> Bool {
         guard FileManager.default.fileExists(atPath: url.appendingPathComponent("artisan").path) else {
-            if showValidationAlert {
-                showAlert(title: "Not a Laravel project", message: "The selected folder does not contain an artisan file.")
-            }
-            return false
+            showAlert(title: "Not a Laravel project", message: "The selected folder does not contain an artisan file.")
+            return
         }
-        let standardizedPath = url.standardizedFileURL.path
-        if let existing = projects.first(where: { URL(fileURLWithPath: $0.path).standardizedFileURL.path == standardizedPath }) {
+
+        let project = LaravelProject(name: url.lastPathComponent, path: url.path, laravelVersion: "Detecting…", phpVersion: "Detecting…", branch: "—", appURL: "http://127.0.0.1:8000", environment: "local")
+        if let existing = projects.first(where: { $0.path == project.path }) {
             selectedProjectID = existing.id
-            return true
+        } else {
+            projects.append(project)
+            selectedProjectID = project.id
+            saveProjects()
         }
-        let project = LaravelProject(name: url.lastPathComponent, path: standardizedPath, laravelVersion: "Detecting…", phpVersion: "Detecting…", branch: "—", appURL: "http://127.0.0.1:8000", environment: "local", lastOpenedAt: Date())
-        projects.append(project)
-        selectedProjectID = project.id
-        saveProjects()
-        return true
     }
 
 
@@ -888,80 +883,12 @@ final class AppStore {
         saveProjects()
     }
 
-    func renameProject(_ id: LaravelProject.ID, to proposedName: String) -> String? {
-        let name = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return "Project alias cannot be empty." }
-        guard !projects.contains(where: { $0.id != id && $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }) else {
-            return "A project alias named ‘\(name)’ already exists."
-        }
-        guard let index = projects.firstIndex(where: { $0.id == id }) else { return "Project could not be found." }
-        projects[index].name = name
-        saveProjects()
-        statusMessage = "Project alias changed to \(name)"
-        return nil
-    }
-
-    func setProjectFavorite(_ id: LaravelProject.ID, favorite: Bool) {
-        guard let index = projects.firstIndex(where: { $0.id == id }) else { return }
-        projects[index].isFavorite = favorite
-        saveProjects()
-    }
-
-    func setProjectTags(_ id: LaravelProject.ID, tags: [String]) {
-        guard let index = projects.firstIndex(where: { $0.id == id }) else { return }
-        projects[index].tags = Array(Set(tags.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })).sorted()
-        saveProjects()
-    }
-
-    func duplicateProject(_ id: LaravelProject.ID) {
-        guard let source = projects.first(where: { $0.id == id }) else { return }
-        var copy = source
-        copy.id = UUID()
-        var candidate = "\(source.name) Copy"
-        var suffix = 2
-        while projects.contains(where: { $0.name.localizedCaseInsensitiveCompare(candidate) == .orderedSame }) {
-            candidate = "\(source.name) Copy \(suffix)"; suffix += 1
-        }
-        copy.name = candidate
-        copy.lastOpenedAt = nil
-        projects.append(copy)
-        selectedProjectID = copy.id
-        saveProjects()
-    }
-
-    func exportProjectMetadata(_ id: LaravelProject.ID) {
-        guard let project = projects.first(where: { $0.id == id }) else { return }
-        let panel = NSSavePanel()
-        panel.nameFieldStringValue = "\(project.name.replacingOccurrences(of: "/", with: "-"))-ABSDEV.json"
-        panel.allowedContentTypes = [.json]
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(project).write(to: url, options: .atomic)
-        } catch { showAlert(title: "Could not export project", message: error.localizedDescription) }
-    }
-
-    func removeProject(_ id: LaravelProject.ID, moveFolderToTrash: Bool) -> String? {
-        guard let project = projects.first(where: { $0.id == id }) else { return "Project could not be found." }
+    func removeSelectedProject() {
+        guard let id = selectedProjectID else { return }
         stopAllProcesses()
-        if moveFolderToTrash {
-            do { try FileManager.default.trashItem(at: URL(fileURLWithPath: project.path), resultingItemURL: nil) }
-            catch { return "The project folder could not be moved to Trash: \(error.localizedDescription)" }
-        }
-        do { try KBStore.purge(projectID: id) }
-        catch { return "The project was not removed because its knowledge-base data could not be deleted: \(error.localizedDescription)" }
-        if let icon = project.customIconPath { try? FileManager.default.removeItem(atPath: icon) }
-        openWebUI.mcp.embeddedServer.removeProject(named: project.name)
         projects.removeAll { $0.id == id }
         selectedProjectID = projects.first?.id
         saveProjects()
-        statusMessage = "Removed \(project.name)"
-        return nil
-    }
-
-    func removeSelectedProject() {
-        guard let id = selectedProjectID else { return }
-        _ = removeProject(id, moveFolderToTrash: false)
     }
 
     func refreshProject() async {
@@ -974,7 +901,6 @@ final class AppStore {
         async let runtimeRefresh: Void = refreshContainerRuntimeAvailability()
         let phpExecutable = await resolvePHPExecutable(in: project.path)
         async let branch = capture("git branch --show-current", in: project.path)
-        async let gitStatus = capture("git status --porcelain", in: project.path)
 
         var phpVersion = "Unavailable"
         var laravelVersion = "Unavailable"
@@ -985,7 +911,6 @@ final class AppStore {
             if laravelResult.succeeded { laravelVersion = laravelResult.output.replacingOccurrences(of: "Laravel Framework ", with: "").trimmed.nonEmpty ?? "Unavailable" }
         }
         let branchName = await branch
-        let gitStatusOutput = await gitStatus
         await runtimeRefresh
 
         // The user may have selected another project while the commands were
@@ -996,7 +921,6 @@ final class AppStore {
             projects[index].phpVersion = phpVersion
             projects[index].laravelVersion = laravelVersion
             projects[index].branch = branchName.trimmed.nonEmpty ?? "No branch"
-            projects[index].gitDirty = !gitStatusOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             loadEnvironment()
             projects[index].environment = value(for: "APP_ENV") ?? "local"
             projects[index].appURL = value(for: "APP_URL") ?? "http://127.0.0.1:8000"

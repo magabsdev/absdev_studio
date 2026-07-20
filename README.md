@@ -71,3 +71,17 @@ Project definitions are stored as separate JSON files in:
 ```
 
 Use **Create JSON for Studio Projects** to generate definitions for projects already registered in ABSDEV Studio, or edit the JSON files manually. Each definition controls its project root, include/exclude rules, enabled state and read/search/list permissions. The server binds to localhost only and rejects paths outside each configured project root.
+
+## Embedded MCP project intelligence
+
+The embedded server exposes `ask_project` as the primary natural-language source tool. Example MCP arguments:
+
+```json
+{
+  "project": "poolmate",
+  "question": "Where are tournament matches created and which tests cover that flow?",
+  "maxFiles": 14
+}
+```
+
+When exactly one MCP project is enabled, `project` may be omitted. Supporting read-only tools include `find_definition`, `find_references`, `project_overview`, `project_git_status`, `project_laravel_routes`, `project_tests`, and `project_index_status`.

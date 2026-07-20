@@ -474,8 +474,17 @@ struct MCPSettingsView: View {
 }
 
 
+private struct MCPEditorItem: Identifiable {
+    let id = UUID()
+    let originalID: String?
+    var project: MCPProjectDefinition
+}
+
 private struct EmbeddedMCPServerSettingsCard: View {
     @Environment(AppStore.self) private var store
+    @State private var editorItem: MCPEditorItem?
+    @State private var editorError: String?
+    @State private var projectPendingDeletion: MCPProjectDefinition?
 
     var body: some View {
         @Bindable var server = store.openWebUI.mcp.embeddedServer
@@ -484,7 +493,7 @@ private struct EmbeddedMCPServerSettingsCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Label("ABSDEV Studio MCP Server", systemImage: "server.rack")
                         .font(.title3.bold())
-                    Text("Runs inside ABSDEV Studio and serves projects defined by separate JSON files.")
+                    Text("Runs inside ABSDEV Studio and serves local projects defined by editable JSON files.")
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -507,21 +516,118 @@ private struct EmbeddedMCPServerSettingsCard: View {
                 }
                 GridRow {
                     Text("Projects").frame(width: 110, alignment: .leading)
-                    Text("\(server.projects.count) JSON definitions")
-                    Button("Open Folder", systemImage: "folder") { server.openProjectsDirectory() }
+                    Text("\(server.projects.filter(\.enabled).count) enabled of \(server.projects.count)")
+                    Button("Open JSON Folder", systemImage: "folder") { server.openProjectsDirectory() }
                 }
             }
 
             Toggle("Start the embedded MCP server automatically with ABSDEV Studio", isOn: $server.startsAutomatically)
 
+            GroupBox("MCP Project Definitions") {
+                VStack(alignment: .leading, spacing: 10) {
+                    if server.projects.isEmpty {
+                        ContentUnavailableView(
+                            "No MCP projects",
+                            systemImage: "folder.badge.questionmark",
+                            description: Text("Projects added to ABSDEV Studio are imported automatically, or create a definition manually.")
+                        )
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                    } else {
+                        ForEach(server.projects) { project in
+                            HStack(spacing: 12) {
+                                Image(systemName: project.enabled ? "folder.fill.badge.checkmark" : "folder")
+                                    .foregroundStyle(project.enabled ? .green : .secondary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(project.name).font(.headline)
+                                    Text(project.rootPath)
+                                        .font(.caption.monospaced())
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                                Spacer()
+                                Text(project.id).font(.caption.monospaced()).foregroundStyle(.secondary)
+                                if !project.enabled || !project.permissions.readFiles || !project.permissions.searchFiles {
+                                    Button("Allow Source", systemImage: "lock.open") {
+                                        do { try server.grantFullSourceAccess(to: project) }
+                                        catch { editorError = error.localizedDescription }
+                                    }
+                                    .help("Enable this project and allow listing, searching and reading source files")
+                                } else {
+                                    Label("Source allowed", systemImage: "checkmark.shield.fill")
+                                        .font(.caption)
+                                        .foregroundStyle(.green)
+                                }
+                                VStack(alignment: .trailing, spacing: 3) {
+                                    Text(server.indexMessages[project.id] ?? "Not indexed")
+                                        .font(.caption2.monospaced())
+                                        .foregroundStyle((server.indexMessages[project.id] ?? "").hasPrefix("Failed") ? .red : .secondary)
+                                    HStack(spacing: 6) {
+                                        Button(server.indexingProjectIDs.contains(project.id) ? "Indexing…" : "Index", systemImage: "text.magnifyingglass") {
+                                            server.rebuildIndex(for: project, force: true)
+                                        }
+                                        .disabled(server.indexingProjectIDs.contains(project.id) || !project.enabled)
+                                        Button("Remove Index", systemImage: "xmark.bin") { server.removeIndex(for: project) }
+                                            .disabled(server.indexingProjectIDs.contains(project.id))
+                                    }
+                                    .labelStyle(.iconOnly)
+                                }
+                                Button("Edit", systemImage: "pencil") { openEditor(project) }
+                                Button(role: .destructive) {
+                                    projectPendingDeletion = project
+                                } label: { Image(systemName: "trash") }
+                                .help("Delete the JSON definition for \(project.name)")
+                            }
+                            .padding(.vertical, 4)
+                            if project.id != server.projects.last?.id { Divider() }
+                        }
+                    }
+
+                    HStack {
+                        Button("Add Project", systemImage: "plus") { createProject() }
+                        Button("Import Missing Studio Projects", systemImage: "arrow.down.doc") {
+                            server.synchroniseProjects(store.projects)
+                        }
+                        Spacer()
+                        Button("Open Index Folder", systemImage: "externaldrive") { server.openIndexesDirectory() }
+                        Button("Reload JSON", systemImage: "arrow.clockwise") { server.reloadProjects() }
+                    }
+                }
+                .padding(6)
+            }
+
+            GroupBox("MCP Diagnostics") {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        Text("Requests: \(server.requestCount)")
+                        Text("Last: \(server.lastRequest)")
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Button("View Log", systemImage: "list.bullet.rectangle") { server.isLogViewerPresented = true }
+                        Button("Open Log File", systemImage: "doc.text") { server.openLogFile() }
+                        Button("Clear", systemImage: "trash", role: .destructive) { server.clearLog() }
+                    }
+                    if let latest = server.logEntries.last {
+                        Text("[\(latest.level)] \(latest.message)")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(latest.level == "ERROR" ? .red : .secondary)
+                            .lineLimit(2)
+                            .textSelection(.enabled)
+                    } else {
+                        Text("No MCP diagnostic entries yet.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .padding(6)
+            }
+
             HStack {
                 Text(server.status).font(.caption).foregroundStyle(.secondary)
                 if let error = server.lastError { Text(error).font(.caption).foregroundStyle(.red).lineLimit(2) }
                 Spacer()
-                Button("Reload JSON", systemImage: "arrow.clockwise") { server.reloadProjects() }
-                Button("Create JSON for Studio Projects", systemImage: "plus.square.on.square") {
-                    server.importProjects(store.projects)
-                }
                 Button(server.isRunning ? "Restart" : "Start", systemImage: server.isRunning ? "arrow.clockwise" : "play.fill") {
                     server.isRunning ? server.restart() : server.start()
                 }
@@ -533,6 +639,243 @@ private struct EmbeddedMCPServerSettingsCard: View {
         .padding(18)
         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(.separator.opacity(0.7)))
+        .task {
+            server.setActiveNavigatorProject(store.selectedProject)
+            server.reloadProjects()
+        }
+        .onChange(of: store.selectedProjectID) { _, _ in
+            server.setActiveNavigatorProject(store.selectedProject)
+        }
+        .sheet(item: $editorItem) { item in
+            MCPProjectDefinitionEditor(
+                project: item.project,
+                originalID: item.originalID,
+                onSave: { updated, originalID in
+                    do {
+                        try server.saveProject(updated, replacing: originalID)
+                        editorItem = nil
+                        editorError = nil
+                    } catch {
+                        editorError = error.localizedDescription
+                    }
+                },
+                onCancel: {
+                    editorItem = nil
+                    editorError = nil
+                },
+                error: editorError
+            )
+        }
+        .sheet(isPresented: $server.isLogViewerPresented) {
+            MCPLogViewer(server: server)
+        }
+        .confirmationDialog(
+            "Delete MCP project definition?",
+            isPresented: Binding(
+                get: { projectPendingDeletion != nil },
+                set: { if !$0 { projectPendingDeletion = nil } }
+            ),
+            presenting: projectPendingDeletion
+        ) { project in
+            Button("Delete \(project.name)", role: .destructive) {
+                do {
+                    try server.deleteProject(id: project.id)
+                    projectPendingDeletion = nil
+                    editorError = nil
+                } catch {
+                    projectPendingDeletion = nil
+                    editorError = error.localizedDescription
+                }
+            }
+            Button("Cancel", role: .cancel) { projectPendingDeletion = nil }
+        } message: { project in
+            Text("This removes the backing JSON file and its saved source index. It does not delete the actual project folder.")
+        }
+    }
+
+    private func openEditor(_ project: MCPProjectDefinition) {
+        editorItem = MCPEditorItem(originalID: project.id, project: project)
+        editorError = nil
+    }
+
+    private func createProject() {
+        let project = MCPProjectDefinition(id: "new-project", name: "New Project", rootPath: "")
+        editorItem = MCPEditorItem(originalID: nil, project: project)
+        editorError = nil
+    }
+}
+
+private struct MCPProjectDefinitionEditor: View {
+    @State private var project: MCPProjectDefinition
+    @State private var includeText: String
+    @State private var excludeText: String
+    let originalID: String?
+    let onSave: (MCPProjectDefinition, String?) -> Void
+    let onCancel: () -> Void
+    let error: String?
+
+    init(
+        project: MCPProjectDefinition,
+        originalID: String?,
+        onSave: @escaping (MCPProjectDefinition, String?) -> Void,
+        onCancel: @escaping () -> Void,
+        error: String?
+    ) {
+        _project = State(initialValue: project)
+        _includeText = State(initialValue: project.include.joined(separator: "\n"))
+        _excludeText = State(initialValue: project.exclude.joined(separator: "\n"))
+        self.originalID = originalID
+        self.onSave = onSave
+        self.onCancel = onCancel
+        self.error = error
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Label(originalID == nil ? "Add MCP Project" : "Edit MCP Project", systemImage: "curlybraces.square")
+                    .font(.title2.bold())
+                Spacer()
+                Toggle("Enabled", isOn: $project.enabled)
+                    .toggleStyle(.switch)
+            }
+
+            Form {
+                TextField("Project ID", text: $project.id)
+                TextField("Name", text: $project.name)
+                TextField("Project type", text: $project.projectType)
+                LabeledContent("Root folder") {
+                    HStack {
+                        TextField("/Users/name/Developer/Project", text: $project.rootPath)
+                        Button("Choose…") { chooseFolder() }
+                    }
+                }
+                TextField("Description", text: $project.projectDescription, axis: .vertical)
+                    .lineLimit(2...4)
+
+                Section("Permissions") {
+                    Toggle("List directories", isOn: $project.permissions.listDirectories)
+                    Toggle("Read files", isOn: $project.permissions.readFiles)
+                    Toggle("Search files", isOn: $project.permissions.searchFiles)
+                    Toggle("Write files", isOn: $project.permissions.writeFiles)
+                    Toggle("Run tests", isOn: $project.permissions.runTests)
+                    Text("Write and test execution are disabled by default. Edits use exact replacements, backups, and optional change-detection hashes.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Include patterns — one per line") {
+                    TextEditor(text: $includeText)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(minHeight: 80)
+                }
+
+                Section("Exclude patterns — one per line") {
+                    TextEditor(text: $excludeText)
+                        .font(.system(.body, design: .monospaced))
+                        .frame(minHeight: 130)
+                }
+            }
+            .formStyle(.grouped)
+
+            if let error {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                    .font(.callout)
+            }
+
+            HStack {
+                Text("Saved as \(project.id).json")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Cancel", action: onCancel)
+                Button("Save") {
+                    project.include = lines(includeText, fallback: ["**/*"])
+                    project.exclude = lines(excludeText, fallback: [])
+                    onSave(project, originalID)
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(22)
+        .frame(minWidth: 720, minHeight: 700)
+    }
+
+    private func lines(_ text: String, fallback: [String]) -> [String] {
+        let values = text.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return values.isEmpty ? fallback : values
+    }
+
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose Project"
+        if panel.runModal() == .OK, let url = panel.url {
+            project.rootPath = url.path
+        }
+    }
+}
+
+private struct MCPLogViewer: View {
+    @Bindable var server: EmbeddedMCPServerController
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("MCP Diagnostic Log", systemImage: "waveform.path.ecg.rectangle")
+                    .font(.title2.bold())
+                Spacer()
+                Button("Open File", systemImage: "doc.text") { server.openLogFile() }
+                Button("Clear", systemImage: "trash", role: .destructive) { server.clearLog() }
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+            }
+
+            Text(server.logFileURL.path)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+
+            if server.logEntries.isEmpty {
+                ContentUnavailableView("No MCP log entries", systemImage: "text.badge.xmark")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 5) {
+                            ForEach(server.logEntries) { entry in
+                                HStack(alignment: .top, spacing: 8) {
+                                    Text(entry.timestamp.formatted(date: .numeric, time: .standard))
+                                        .foregroundStyle(.secondary)
+                                    Text(entry.level)
+                                        .frame(width: 58, alignment: .leading)
+                                        .foregroundStyle(entry.level == "ERROR" ? .red : entry.level == "WARN" ? .orange : .secondary)
+                                    Text(entry.message)
+                                        .textSelection(.enabled)
+                                }
+                                .font(.caption.monospaced())
+                                .id(entry.id)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                    }
+                    .background(.black.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                    .onChange(of: server.logEntries.count) { _, _ in
+                        if let last = server.logEntries.last { proxy.scrollTo(last.id, anchor: .bottom) }
+                    }
+                }
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 900, minHeight: 620)
     }
 }
 

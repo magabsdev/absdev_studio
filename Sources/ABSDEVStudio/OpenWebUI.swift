@@ -324,6 +324,15 @@ final class OpenWebUIController {
 
         var contextParts: [String] = []
 
+        if let activeProject {
+            contextParts.append("""
+            ACTIVE ABSDEV STUDIO PROJECT
+            Name: \(activeProject.name)
+            Root: \(activeProject.path)
+            The selected project in the ABSDEV Studio navigator is authoritative. Answer only about this project unless the user explicitly requests another configured MCP project. Never substitute PoolMate or another remembered project.
+            """)
+        }
+
         if !prompt.isEmpty {
             contextParts.append(prompt)
         }

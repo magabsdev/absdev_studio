@@ -260,18 +260,6 @@ struct KBManifest: Codable {
   var cut = false
   var showingTrash = false
   private var saver: Task<Void, Never>?
-  static func purge(projectID: UUID, persistence: KBPersistence = .shared) throws {
-    let context = persistence.container.viewContext
-    let request = NSFetchRequest<NSFetchRequestResult>(entityName: "KBDocument")
-    request.predicate = NSPredicate(format: "projectID == %@", projectID as CVarArg)
-    try context.execute(NSBatchDeleteRequest(fetchRequest: request))
-    try context.save()
-    let attachments = KBPersistence.attachments.appendingPathComponent(projectID.uuidString)
-    if FileManager.default.fileExists(atPath: attachments.path) {
-      try FileManager.default.removeItem(at: attachments)
-    }
-  }
-
   init(projectID: UUID, persistence: KBPersistence = .shared) {
     self.projectID = projectID
     context = persistence.container.viewContext
