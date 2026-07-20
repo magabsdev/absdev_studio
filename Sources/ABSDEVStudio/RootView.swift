@@ -450,6 +450,8 @@ private struct DetailRouter: View {
         Group {
             switch store.selectedSection {
         case .overview: OverviewView()
+        case .laravelStudio: LaravelStudioView()
+        case .runtimeCentre: RuntimeCentreView()
         case .development: DevelopmentView()
         case .environment: EnvironmentView()
         case .artisan: ArtisanView()
@@ -490,6 +492,7 @@ private struct DetailRouter: View {
         case .openWebUI: OpenWebUIView()
         case .lmStudio: LMStudioView()
         case .mcp: MCPWorkspaceView()
+        case .helpCentre: HelpCentreView()
             }
         }
         .id(store.selectedSection)

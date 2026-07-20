@@ -45,6 +45,8 @@ struct LaravelProject: Identifiable, Hashable, Codable, Sendable {
 
 enum AppSection: String, CaseIterable, Identifiable {
     case overview = "Overview"
+    case laravelStudio = "Laravel Studio"
+    case runtimeCentre = "Runtime Centre"
     case development = "Development"
     case environment = "Environment"
     case artisan = "Artisan"
@@ -85,12 +87,15 @@ enum AppSection: String, CaseIterable, Identifiable {
     case openWebUI = "Open WebUI"
     case lmStudio = "LM Studio"
     case mcp = "MCP Tools"
+    case helpCentre = "Help Centre"
 
     var id: String { rawValue }
 
     var symbol: String {
         switch self {
         case .overview: "square.grid.2x2.fill"
+        case .laravelStudio: "shippingbox.fill"
+        case .runtimeCentre: "gearshape.2.fill"
         case .development: "play.rectangle.fill"
         case .environment: "slider.horizontal.3"
         case .artisan: "terminal.fill"
@@ -131,12 +136,15 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .openWebUI: "bubble.left.and.bubble.right.fill"
         case .lmStudio: "cpu.fill"
         case .mcp: "point.3.connected.trianglepath.dotted"
+        case .helpCentre: "questionmark.book.closed.fill"
         }
     }
 
     var tint: Color {
         switch self {
         case .overview: .blue
+        case .laravelStudio: .red
+        case .runtimeCentre: .indigo
         case .development: .green
         case .environment: .orange
         case .artisan: .mint
@@ -177,6 +185,7 @@ enum AppSection: String, CaseIterable, Identifiable {
         case .openWebUI: .purple
         case .lmStudio: .orange
         case .mcp: .indigo
+        case .helpCentre: .blue
         }
     }
 }

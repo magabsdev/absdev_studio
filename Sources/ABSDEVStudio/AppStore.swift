@@ -273,7 +273,7 @@ final class AppStore {
             case .featureFlags: projectContainsAnyPackage(["laravel/pennant"])
             case .aiInspector: aiFeaturesEnabled && projectContainsAnyPackage(["laravel/ai"])
             case .aiWorkspace: aiFeaturesEnabled
-            case .mcp: true
+            case .mcp, .helpCentre, .laravelStudio, .runtimeCentre: true
             case .openWebUI, .lmStudio: false
             case .frontend: projectPathExists("package.json")
             case .events: projectHasArtisanCommand("event:list") || projectDirectoryContainsFiles("app/Events") || projectDirectoryContainsFiles("app/Listeners")

@@ -72,6 +72,22 @@ struct ABSDEVStudioApp: App {
                 }
             }
 
+            CommandGroup(replacing: .help) {
+                Button("ABSDEV Studio Help Centre") {
+                    store.selectedSection = .helpCentre
+                }
+                .keyboardShortcut("?", modifiers: [.command])
+                Divider()
+                Button("Keyboard Shortcuts") {
+                    HelpLibrary.shared.open("KEYBOARD-SHORTCUTS.md")
+                    store.selectedSection = .helpCentre
+                }
+                Button("Frequently Asked Questions") {
+                    HelpLibrary.shared.open("FAQ.md")
+                    store.selectedSection = .helpCentre
+                }
+            }
+
             CommandMenu("Laravel") {
                 Button(store.isDevelopmentRunning ? "Stop Development" : "Start Development") {
                     store.toggleDevelopment()
