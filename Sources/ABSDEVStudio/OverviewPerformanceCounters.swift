@@ -1,34 +1,77 @@
+import Charts
 import Darwin
 import Foundation
 import Observation
 import SwiftUI
-import Charts
 
-fileprivate struct PerformanceSample: Identifiable {
-    let id = UUID()
+struct PerformanceSample: Identifiable, Codable, Sendable {
+    let id: UUID
     let date: Date
     let cpu: Double
     let memory: Double
+    let storage: Double
+
+    init(id: UUID = UUID(), date: Date, cpu: Double, memory: Double, storage: Double) {
+        self.id = id
+        self.date = date
+        self.cpu = cpu
+        self.memory = memory
+        self.storage = storage
+    }
+}
+
+enum PerformanceRange: String, CaseIterable, Identifiable {
+    case fiveMinutes = "5m"
+    case oneHour = "1h"
+    case oneDay = "24h"
+    case sevenDays = "7d"
+    case thirtyDays = "30d"
+
+    var id: String { rawValue }
+
+    var interval: TimeInterval {
+        switch self {
+        case .fiveMinutes: 5 * 60
+        case .oneHour: 60 * 60
+        case .oneDay: 24 * 60 * 60
+        case .sevenDays: 7 * 24 * 60 * 60
+        case .thirtyDays: 30 * 24 * 60 * 60
+        }
+    }
 }
 
 @MainActor
 @Observable
 final class OverviewPerformanceMonitor {
-    static let shared = OverviewPerformanceMonitor()
-
     var cpuPercent = 0.0
     var memoryPercent = 0.0
     var storagePercent = 0.0
     var storageUsedText = "—"
-    fileprivate var history: [PerformanceSample] = []
+    private(set) var history: [PerformanceSample] = []
 
     private var samplingTask: Task<Void, Never>?
+    private var saveTask: Task<Void, Never>?
     private var previousCPU: host_cpu_load_info_data_t?
+    private var activeProjectID: UUID?
+    private var historyURL: URL?
 
-    private init() {}
+    func configure(projectID: UUID) {
+        guard activeProjectID != projectID else { return }
+        stop()
+        activeProjectID = projectID
+        historyURL = Self.historyURL(for: projectID)
+        history = loadHistory()
+        previousCPU = nil
+
+        if let latest = history.last {
+            cpuPercent = latest.cpu
+            memoryPercent = latest.memory
+            storagePercent = latest.storage
+        }
+    }
 
     func start() {
-        guard samplingTask == nil else { return }
+        guard activeProjectID != nil, samplingTask == nil else { return }
         sample()
         samplingTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -42,6 +85,15 @@ final class OverviewPerformanceMonitor {
     func stop() {
         samplingTask?.cancel()
         samplingTask = nil
+        saveTask?.cancel()
+        saveTask = nil
+        persistHistory()
+    }
+
+    func samples(in range: PerformanceRange) -> [PerformanceSample] {
+        let cutoff = Date().addingTimeInterval(-range.interval)
+        let filtered = history.filter { $0.date >= cutoff }
+        return downsampleForDisplay(filtered, maximumPoints: 900)
     }
 
     private func sample() {
@@ -55,12 +107,106 @@ final class OverviewPerformanceMonitor {
             PerformanceSample(
                 date: .now,
                 cpu: cpuPercent,
-                memory: memoryPercent
+                memory: memoryPercent,
+                storage: storagePercent
             )
         )
-        if history.count > 60 {
-            history.removeFirst(history.count - 60)
+
+        compactHistory()
+        scheduleSave()
+    }
+
+    private func scheduleSave() {
+        guard saveTask == nil else { return }
+        saveTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(20))
+            guard !Task.isCancelled else { return }
+            self?.persistHistory()
+            self?.saveTask = nil
         }
+    }
+
+    private func loadHistory() -> [PerformanceSample] {
+        guard let historyURL,
+              let data = try? Data(contentsOf: historyURL),
+              let decoded = try? JSONDecoder.performanceDecoder.decode([PerformanceSample].self, from: data)
+        else { return [] }
+
+        let cutoff = Date().addingTimeInterval(-(30 * 24 * 60 * 60))
+        return decoded.filter { $0.date >= cutoff }.sorted { $0.date < $1.date }
+    }
+
+    private func persistHistory() {
+        guard let historyURL else { return }
+        compactHistory()
+        do {
+            try FileManager.default.createDirectory(
+                at: historyURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let data = try JSONEncoder.performanceEncoder.encode(history)
+            try data.write(to: historyURL, options: .atomic)
+        } catch {
+            // Performance persistence is best-effort and must never interrupt the overview.
+        }
+    }
+
+    private func compactHistory() {
+        let now = Date()
+        let thirtyDaysAgo = now.addingTimeInterval(-(30 * 24 * 60 * 60))
+        let oneDayAgo = now.addingTimeInterval(-(24 * 60 * 60))
+        let oneHourAgo = now.addingTimeInterval(-(60 * 60))
+
+        let retained = history.filter { $0.date >= thirtyDaysAgo }.sorted { $0.date < $1.date }
+        var recent: [PerformanceSample] = []
+        var daily: [PerformanceSample] = []
+        var archive: [PerformanceSample] = []
+
+        var lastDailyBucket: Int64?
+        var lastArchiveBucket: Int64?
+
+        for sample in retained {
+            if sample.date >= oneHourAgo {
+                recent.append(sample) // Full two-second resolution for the latest hour.
+            } else if sample.date >= oneDayAgo {
+                let bucket = Int64(sample.date.timeIntervalSince1970 / 60)
+                if bucket != lastDailyBucket {
+                    daily.append(sample) // One point per minute for the latest day.
+                    lastDailyBucket = bucket
+                }
+            } else {
+                let bucket = Int64(sample.date.timeIntervalSince1970 / (15 * 60))
+                if bucket != lastArchiveBucket {
+                    archive.append(sample) // One point per 15 minutes for the 30-day archive.
+                    lastArchiveBucket = bucket
+                }
+            }
+        }
+
+        history = archive + daily + recent
+    }
+
+    private func downsampleForDisplay(_ samples: [PerformanceSample], maximumPoints: Int) -> [PerformanceSample] {
+        guard samples.count > maximumPoints else { return samples }
+        let stride = max(1, Int(ceil(Double(samples.count) / Double(maximumPoints))))
+        var result: [PerformanceSample] = []
+        result.reserveCapacity(maximumPoints + 1)
+        for index in Swift.stride(from: 0, to: samples.count, by: stride) {
+            result.append(samples[index])
+        }
+        if let last = samples.last, result.last?.id != last.id {
+            result.append(last)
+        }
+        return result
+    }
+
+    private static func historyURL(for projectID: UUID) -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support")
+        return base
+            .appendingPathComponent("ABSDEVStudio", isDirectory: true)
+            .appendingPathComponent("Performance", isDirectory: true)
+            .appendingPathComponent("\(projectID.uuidString).json")
     }
 
     private func readCPU() -> Double {
@@ -77,7 +223,7 @@ final class OverviewPerformanceMonitor {
         guard result == KERN_SUCCESS else { return cpuPercent }
 
         defer { previousCPU = load }
-        guard let previousCPU else { return 0 }
+        guard let previousCPU else { return cpuPercent }
 
         let user = Double(load.cpu_ticks.0 - previousCPU.cpu_ticks.0)
         let system = Double(load.cpu_ticks.1 - previousCPU.cpu_ticks.1)
@@ -85,7 +231,7 @@ final class OverviewPerformanceMonitor {
         let nice = Double(load.cpu_ticks.3 - previousCPU.cpu_ticks.3)
         let total = user + system + idle + nice
 
-        guard total > 0 else { return 0 }
+        guard total > 0 else { return cpuPercent }
         return min(100, max(0, ((user + system + nice) / total) * 100))
     }
 
@@ -110,7 +256,7 @@ final class OverviewPerformanceMonitor {
         let used = active + inactive + wired + compressed
         let total = Double(ProcessInfo.processInfo.physicalMemory)
 
-        guard total > 0 else { return 0 }
+        guard total > 0 else { return memoryPercent }
         return min(100, max(0, used / total * 100))
     }
 
@@ -135,8 +281,32 @@ final class OverviewPerformanceMonitor {
     }
 }
 
+private extension JSONEncoder {
+    static var performanceEncoder: JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        return encoder
+    }
+}
+
+private extension JSONDecoder {
+    static var performanceDecoder: JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }
+}
+
 struct OverviewPerformanceCounters: View {
-    @State private var monitor = OverviewPerformanceMonitor.shared
+    let projectID: UUID
+
+    @State private var monitor = OverviewPerformanceMonitor()
+    @State private var selectedRange: PerformanceRange = .oneHour
+
+    private var visibleSamples: [PerformanceSample] {
+        monitor.samples(in: selectedRange)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -144,11 +314,19 @@ struct OverviewPerformanceCounters: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("System Load")
                         .font(.title3.bold())
-                    Text("Live CPU, memory and storage usage sampled every two seconds")
+                    Text("Persistent per-project history sampled every two seconds")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                Picker("History range", selection: $selectedRange) {
+                    ForEach(PerformanceRange.allCases) { range in
+                        Text(range.rawValue).tag(range)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 300)
+
                 Label("Live", systemImage: "waveform.path.ecg")
                     .font(.caption.bold())
                     .foregroundStyle(.green)
@@ -175,9 +353,9 @@ struct OverviewPerformanceCounters: View {
                 )
             }
 
-            if monitor.history.count > 1 {
+            if visibleSamples.count > 1 {
                 Chart {
-                    ForEach(monitor.history) { sample in
+                    ForEach(visibleSamples) { sample in
                         LineMark(
                             x: .value("Time", sample.date),
                             y: .value("CPU", sample.cpu)
@@ -189,14 +367,17 @@ struct OverviewPerformanceCounters: View {
                             y: .value("Memory", sample.memory)
                         )
                         .foregroundStyle(by: .value("Metric", "Memory"))
+
+                        LineMark(
+                            x: .value("Time", sample.date),
+                            y: .value("Storage", sample.storage)
+                        )
+                        .foregroundStyle(by: .value("Metric", "Storage"))
                     }
                 }
                 .chartYScale(domain: 0...100)
                 .chartYAxis {
-                    AxisMarks(
-                        position: .leading,
-                        values: .stride(by: 25)
-                    ) { axisValue in
+                    AxisMarks(position: .leading, values: .stride(by: 25)) { axisValue in
                         AxisGridLine()
                         AxisValueLabel {
                             if let percentage = axisValue.as(Double.self) {
@@ -205,6 +386,13 @@ struct OverviewPerformanceCounters: View {
                         }
                     }
                 }
+                .frame(height: 190)
+            } else {
+                ContentUnavailableView(
+                    "Building performance history",
+                    systemImage: "chart.xyaxis.line",
+                    description: Text("Samples are saved automatically and will be restored the next time ABSDEV Studio opens.")
+                )
                 .frame(height: 150)
             }
         }
@@ -214,7 +402,10 @@ struct OverviewPerformanceCounters: View {
             RoundedRectangle(cornerRadius: 16)
                 .stroke(.separator.opacity(0.65))
         )
-        .task { monitor.start() }
+        .task(id: projectID) {
+            monitor.configure(projectID: projectID)
+            monitor.start()
+        }
         .onDisappear { monitor.stop() }
     }
 

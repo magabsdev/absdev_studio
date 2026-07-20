@@ -75,7 +75,7 @@ struct OverviewView: View {
                     }
 
 
-                    OverviewPerformanceCounters()
+                    OverviewPerformanceCounters(projectID: project.id)
 
                     if !store.capabilitySnapshot.profiles.isEmpty {
                         GroupBox {

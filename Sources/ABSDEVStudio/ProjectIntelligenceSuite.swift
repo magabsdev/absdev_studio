@@ -576,7 +576,7 @@ private final class ProductStudioModel {
 
     nonisolated private static func resolveProjectCommand(_ command: String, project: LaravelProject) -> (command: String, display: String) {
         var resolved = command
-        var display = command
+        let display = command
         let php = workingPHP(for: project)
         if command == "php" || command.hasPrefix("php ") {
             resolved = shellQuote(php) + command.dropFirst(3)
