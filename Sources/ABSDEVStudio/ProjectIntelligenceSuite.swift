@@ -387,6 +387,13 @@ private final class ProductStudioModel {
         case runtime = "Runtime Manager"
         case dependencies = "Dependency Inspector"
         case plugins = "Plugin SDK"
+        case projectDoctor = "Project Doctor Pro"
+        case databaseCompare = "Database Compare"
+        case visualDebugger = "Visual Request Debugger"
+        case codeReview = "AI Code Review"
+        case testWriter = "AI Test Writer"
+        case gitAdvanced = "Advanced Git"
+        case observability = "Observability"
         var id: String { rawValue }
         var symbol: String {
             switch self {
@@ -416,6 +423,13 @@ private final class ProductStudioModel {
             case .runtime: "switch.2"
             case .dependencies: "shippingbox.and.arrow.backward"
             case .plugins: "puzzlepiece.extension.fill"
+            case .projectDoctor: "stethoscope"
+            case .databaseCompare: "cylinder.split.1x2"
+            case .visualDebugger: "point.bottomleft.forward.to.point.topright.scurvepath"
+            case .codeReview: "checkmark.bubble.fill"
+            case .testWriter: "testtube.2"
+            case .gitAdvanced: "point.topleft.down.to.point.bottomright.curvepath"
+            case .observability: "waveform.path.ecg"
             }
         }
     }
@@ -635,6 +649,60 @@ private final class ProductStudioModel {
             }
             return ([.init(title: "Dependencies", value: "\(deps.count)", detail: "Versions and licences", symbol: "shippingbox.and.arrow.backward")], deps, "Dependency inventory loaded")
 
+        case .projectDoctor:
+            var findings: [ProductStudioItem] = []
+            func finding(_ title: String, _ detail: String, _ kind: String = "Finding") { findings.append(.init(title: title, detail: detail, path: nil, kind: kind)) }
+            if !exists("composer.lock") { finding("Composer lock missing", "Dependency installs are not reproducible", "High") }
+            if tests == 0 { finding("No automated tests detected", "Add feature and unit coverage", "High") }
+            if !exists("README.md") { finding("README missing", "Document setup, architecture and operations", "Medium") }
+            if !exists(".editorconfig") { finding("EditorConfig missing", "Team formatting can drift", "Low") }
+            if isLaravel && !exists("storage/logs") { finding("Log directory missing", "Laravel logging cannot be inspected", "Medium") }
+            let largeControllers = lines("find app Modules -type f -path '*/Controllers/*.php' -exec wc -l {} + 2>/dev/null | awk '$1 > 350 {print $2}'")
+            largeControllers.forEach { finding("Large controller", $0, "Architecture") }
+            let score = max(0, 100 - findings.reduce(0) { $0 + (($1.kind == "High") ? 15 : ($1.kind == "Medium" ? 7 : 3)) })
+            return ([.init(title: "Doctor Score", value: "\(score)%", detail: findings.isEmpty ? "No baseline issues" : "\(findings.count) recommendations", symbol: "stethoscope")], findings, "Project Doctor completed")
+
+        case .databaseCompare:
+            let migrations = lines("find database/migrations Modules -type f -name '*.php' 2>/dev/null | sort")
+            let schemaFiles = lines("find database -maxdepth 3 -type f 2>/dev/null | grep -E '(\\.sql$|schema)' | sort")
+            let rows = itemise(migrations, kind: "Migration") + itemise(schemaFiles, kind: "Schema")
+            return ([.init(title: "Schema Sources", value: "\(rows.count)", detail: "Migrations and schema snapshots ready to compare", symbol: "cylinder.split.1x2")], rows, "Select environments in Database Studio for a live comparison")
+
+        case .visualDebugger:
+            let routes = lines("find routes -type f -name '*.php' 2>/dev/null | sort")
+            let middleware = lines("find app Modules -type f -path '*/Middleware/*.php' 2>/dev/null | sort")
+            let controllers = lines("find app Modules -type f -path '*/Controllers/*.php' 2>/dev/null | sort")
+            let services = lines("find app Modules -type f 2>/dev/null | grep -E '/(Services|Actions)/.*\\.php$' | sort")
+            let flow = itemise(routes, kind: "Route") + itemise(middleware, kind: "Middleware") + itemise(controllers, kind: "Controller") + itemise(services, kind: "Service")
+            return ([.init(title: "Flow Nodes", value: "\(flow.count)", detail: "Request entry points and execution boundaries", symbol: "point.bottomleft.forward.to.point.topright.scurvepath")], flow, "Visual request-flow inventory refreshed")
+
+        case .codeReview:
+            var review: [ProductStudioItem] = []
+            let todos = lines("grep -RIn --exclude-dir=vendor --exclude-dir=node_modules --exclude-dir=.git -E 'TODO|FIXME|HACK' app Modules routes tests 2>/dev/null | head -200")
+            review += todos.map { .init(title: "Review marker", detail: $0, path: nil, kind: "Maintainability") }
+            let directDB = lines("grep -RIl --exclude-dir=vendor -E 'DB::|mysqli_' app/Http Modules/*/Http 2>/dev/null | head -100")
+            review += directDB.map { .init(title: URL(fileURLWithPath: $0).lastPathComponent, detail: "Direct database access in HTTP layer: \($0)", path: $0, kind: "Architecture") }
+            return ([.init(title: "Review Findings", value: "\(review.count)", detail: review.isEmpty ? "No obvious local findings" : "AI-ready review context", symbol: "checkmark.bubble.fill")], review, "Static review completed; use AI Workspace for project-aware remediation")
+
+        case .testWriter:
+            let targets = lines("find app Modules -type f 2>/dev/null | grep -E '/(Controllers|Services|Actions)/.*\\.php$' | sort")
+            let existing = lines("find tests Tests -type f 2>/dev/null | sort")
+            let items = itemise(targets, kind: "Test Candidate") + itemise(existing, kind: "Existing Test")
+            return ([.init(title: "Test Candidates", value: "\(targets.count)", detail: "\(existing.count) existing test files", symbol: "testtube.2")], items, "Test generation context prepared")
+
+        case .gitAdvanced:
+            let branches = lines("git for-each-ref --sort=-committerdate --format='%(refname:short)%09%(committerdate:short)%09%(subject)' refs/heads refs/remotes 2>/dev/null | head -150")
+            let stashes = lines("git stash list 2>/dev/null")
+            let tags = lines("git tag --sort=-creatordate 2>/dev/null | head -100")
+            let items = branches.map { ProductStudioItem(title: $0.split(separator: "\t").first.map(String.init) ?? $0, detail: $0, path: nil, kind: "Branch") } + stashes.map { .init(title: "Stash", detail: $0, path: nil, kind: "Stash") } + tags.map { .init(title: $0, detail: "Repository tag", path: nil, kind: "Tag") }
+            return ([.init(title: "Repository Objects", value: "\(items.count)", detail: "Branches, stashes and tags", symbol: "point.topleft.down.to.point.bottomright.curvepath")], items, "Advanced Git inventory loaded")
+
+        case .observability:
+            let logs = lines("find storage/logs -type f 2>/dev/null | sort")
+            let providers = ["config/logging.php", "config/cache.php", "config/queue.php", "config/database.php"].filter(exists)
+            let items = itemise(logs, kind: "Log") + itemise(providers, kind: "Configuration")
+            return ([.init(title: "Observability Sources", value: "\(items.count)", detail: "Logs, queues, cache and database telemetry", symbol: "waveform.path.ecg")], items, "Observability foundations refreshed")
+
         case .plugins:
             let manifests = itemise(lines("find . -maxdepth 4 -type f 2>/dev/null | grep -E '/(absdev-plugin|plugin)\\.json$' | sort"), kind: "Plugin")
             return ([.init(title: "Installed Plugins", value: "\(manifests.count)", detail: "Analyzer and provider extensions", symbol: "puzzlepiece.extension.fill")], manifests, manifests.isEmpty ? "Plugin SDK ready — no project plugins installed" : "Plugin manifests loaded")
@@ -846,6 +914,23 @@ private struct ProductStudioView: View {
                     case .dependencies:
                         Button("Composer Outdated", systemImage: "clock.arrow.circlepath") { Task { await model.run("composer outdated --direct", project: project) } }
                         Button("Security Audit", systemImage: "shield") { Task { await model.run("composer audit", project: project) } }
+                    case .projectDoctor:
+                        Button("Run Full Audit", systemImage: "stethoscope") { Task { await model.refresh(project: project) } }
+                        Button("Run Tests", systemImage: "checkmark.seal") { Task { await model.run("php artisan test", project: project) } }
+                    case .databaseCompare:
+                        Button("Open Database Studio", systemImage: "cylinder.split.1x2") { store.selectedSection = .database }
+                    case .visualDebugger:
+                        Button("Export Routes", systemImage: "signpost.right") { Task { await model.run("php artisan route:list --json", project: project) } }
+                    case .codeReview:
+                        Button("Open AI Workspace", systemImage: "checkmark.bubble") { store.selectedSection = .aiWorkspace }
+                    case .testWriter:
+                        Button("Open AI Workspace", systemImage: "testtube.2") { store.selectedSection = .aiWorkspace }
+                        Button("Run Existing Tests", systemImage: "play") { Task { await model.run("php artisan test", project: project) } }
+                    case .gitAdvanced:
+                        Button("Status", systemImage: "arrow.triangle.branch") { Task { await model.run("git status --short --branch", project: project) } }
+                        Button("Stashes", systemImage: "archivebox") { Task { await model.run("git stash list", project: project) } }
+                    case .observability:
+                        Button("Tail Laravel Log", systemImage: "waveform.path.ecg") { Task { await model.run("tail -n 250 storage/logs/laravel.log", project: project) } }
                     case .digitalTwin, .requestFlow, .drift, .plugins, .architecture, .dashboard, .templates, .metrics, .replay:
                         Button("Open Project", systemImage: "folder") { NSWorkspace.shared.open(URL(fileURLWithPath: project.path)) }
                     }
@@ -883,6 +968,13 @@ private struct ProductStudioView: View {
         case .runtime: "Inspect and manage the PHP, Composer, Node, package-manager and container toolchain per project."
         case .dependencies: "Review package versions, licences, vulnerabilities, maintenance and upgrade readiness."
         case .plugins: "Discover ABSDEV Studio extension manifests for analyzers, providers and custom project tools."
+        case .projectDoctor: "Run a broad project-readiness audit with an explainable score and practical remediation steps."
+        case .databaseCompare: "Compare migration and schema sources across local, staging and production environments."
+        case .visualDebugger: "Trace requests through routes, middleware, controllers, services, models, cache and responses."
+        case .codeReview: "Prepare project-aware architecture, security and maintainability findings for AI-assisted review."
+        case .testWriter: "Identify untested application boundaries and prepare context for unit, feature and browser tests."
+        case .gitAdvanced: "Inspect branches, stashes, tags and repository history for advanced native Git workflows."
+        case .observability: "Unify persistent performance history with logs, queue, cache and database telemetry."
         }
     }
 
@@ -898,6 +990,12 @@ private struct ProductStudioView: View {
         case "route": "signpost.right"
         case "migration": "cylinder"
         case "documentation": "doc.richtext"
+        case "branch": "arrow.triangle.branch"
+        case "stash": "archivebox"
+        case "tag": "tag"
+        case "middleware": "shield.lefthalf.filled"
+        case "test candidate", "existing test": "testtube.2"
+        case "architecture", "maintainability": "checkmark.bubble"
         default: "doc.text"
         }
     }
