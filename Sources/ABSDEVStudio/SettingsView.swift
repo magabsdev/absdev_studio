@@ -28,10 +28,6 @@ struct SettingsView: View {
                         }
                     }
 
-                    SettingsSection(title: "Global PHP Fallback", subtitle: "Used only when a project-specific runtime has not been resolved.") {
-                        TextField("Optional global PHP executable", text: $store.phpPath).textFieldStyle(.roundedBorder)
-                    }
-
                     SettingsSection(title: "Applications", subtitle: "Choose the applications opened from the project toolbar.") {
                         Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 14) {
                             GridRow {

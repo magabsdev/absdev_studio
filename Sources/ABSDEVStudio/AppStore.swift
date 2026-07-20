@@ -115,6 +115,15 @@ final class AppStore {
         return "\(source): \(path)"
     }
 
+    var selectedProjectPHPExecutable: String {
+        selectedProject?.phpExecutablePath?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private var hasSelectedProjectPHPExecutable: Bool {
+        let path = selectedProjectPHPExecutable
+        return !path.isEmpty && FileManager.default.isExecutableFile(atPath: path)
+    }
+
     var phpPath: String {
         didSet { UserDefaults.standard.set(phpPath, forKey: "phpPath") }
     }
@@ -1008,7 +1017,7 @@ final class AppStore {
 
     func startProcess(_ process: DevProcess) {
         guard let project = selectedProject, runningProcesses[process.id] == nil else { return }
-        if process.command.hasPrefix("php "), phpPath.isEmpty {
+        if process.command.hasPrefix("php "), !hasSelectedProjectPHPExecutable {
             showAlert(title: "PHP is not configured", message: "Open Settings and choose or detect a working PHP executable.")
             return
         }
@@ -1367,8 +1376,8 @@ final class AppStore {
             showAlert(title: "Artisan is unavailable", message: "The selected project does not contain an artisan entry point.")
             return
         }
-        guard !phpPath.isEmpty else {
-            showAlert(title: "PHP is not configured", message: "Open Settings and choose a working PHP executable.")
+        guard hasSelectedProjectPHPExecutable else {
+            showAlert(title: "PHP is not configured for this project", message: "Open Settings and choose or detect a PHP executable for the selected project.")
             return
         }
 
@@ -1390,7 +1399,7 @@ final class AppStore {
         if commandName == "model:show", artisanArguments(from: trimmed).isEmpty {
             guard let model = chooseEloquentModel() else { return }
             clearConsole()
-            runCommand("\(shellQuote(phpPath)) artisan model:show \(shellQuote(model))")
+            runCommand("\(shellQuote(selectedProjectPHPExecutable)) artisan model:show \(shellQuote(model))")
             return
         }
 
@@ -1401,7 +1410,7 @@ final class AppStore {
             // Ordinary commands are more reliable through the normal process
             // runner. A PTY is reserved for commands that actually need raw
             // keyboard input or Laravel Prompts.
-            runCommand("\(shellQuote(phpPath)) artisan \(trimmed)")
+            runCommand("\(shellQuote(selectedProjectPHPExecutable)) artisan \(trimmed)")
         }
     }
 
@@ -1412,8 +1421,8 @@ final class AppStore {
             showAlert(title: "Tinker is unavailable", message: "Choose a valid Laravel project first.")
             return
         }
-        guard !phpPath.isEmpty else {
-            showAlert(title: "PHP is not configured", message: "Open Settings and choose a working PHP executable.")
+        guard hasSelectedProjectPHPExecutable else {
+            showAlert(title: "PHP is not configured for this project", message: "Open Settings and choose or detect a PHP executable for the selected project.")
             return
         }
         // When discovery has completed, respect the selected project's installed command set.
@@ -1623,7 +1632,7 @@ final class AppStore {
 
     private func runCapabilityComposerCommand(arguments: [String], action: String, cleanupCapability: ProjectCapability? = nil) {
         guard let project = selectedProject else { return }
-        guard !phpPath.isEmpty, FileManager.default.isExecutableFile(atPath: phpPath) else {
+        guard hasSelectedProjectPHPExecutable else {
             showAlert(title: "PHP is not configured", message: "Select a working PHP executable in Settings before running Composer. ABSDEV Studio will not use a different Homebrew PHP implicitly.")
             return
         }
@@ -1632,7 +1641,8 @@ final class AppStore {
             return
         }
 
-        let displayed = ([phpPath, composer] + arguments).map(shellQuote).joined(separator: " ")
+        let projectPHP = selectedProjectPHPExecutable
+        let displayed = ([projectPHP, composer] + arguments).map(shellQuote).joined(separator: " ")
         commandOutput = ["$ \(displayed)"]
         packageOperationTitle = action
         packageOperationDetail = arguments.first == "remove" ? "Removing the Composer package and updating the project dependency graph…" : "Installing the Composer package and resolving dependencies…"
@@ -1645,7 +1655,7 @@ final class AppStore {
 
         let process = Process()
         let pipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: phpPath)
+        process.executableURL = URL(fileURLWithPath: projectPHP)
         process.arguments = [composer] + arguments + ["--no-interaction"]
         process.currentDirectoryURL = URL(fileURLWithPath: project.path)
         process.environment = commandEnvironment()
@@ -1856,7 +1866,7 @@ final class AppStore {
         stopInteractiveArtisanSession()
         interactiveArtisanReturnSectionOnExit = returnSectionOnExit
 
-        let artisanCommand = "exec \(shellQuote(phpPath)) artisan \(command)"
+        let artisanCommand = "exec \(shellQuote(selectedProjectPHPExecutable)) artisan \(command)"
         var environment = commandEnvironment()
         environment["TERM"] = environment["TERM"] ?? "xterm-256color"
         environment["COLORTERM"] = environment["COLORTERM"] ?? "truecolor"
@@ -2649,7 +2659,8 @@ final class AppStore {
     func refreshRoutes() async {
         guard let project = selectedProject else { return }
         let projectID = project.id
-        let output = await capture("\(shellQuote(phpPath)) artisan route:list --json", in: project.path)
+        guard let php = await resolvePHPExecutable(in: project.path) else { return }
+        let output = await capture("\(shellQuote(php)) artisan route:list --json", in: project.path, environmentProject: project)
         guard selectedProjectID == projectID,
               let data = output.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
@@ -2797,11 +2808,27 @@ final class AppStore {
         panel.allowsMultipleSelection = false
         panel.treatsFilePackagesAsDirectories = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        guard let index = projects.firstIndex(where: { $0.id == projectID }) else { return }
-        projects[index].phpExecutablePath = url.path
-        projects[index].phpDetectionSource = "Manual"
-        saveProjects()
-        Task { await validateSelectedPHP() }
+        let candidate = url.path
+        guard FileManager.default.isExecutableFile(atPath: candidate) else {
+            showAlert(title: "Invalid PHP executable", message: "The selected file is not executable.")
+            return
+        }
+        guard let project = projects.first(where: { $0.id == projectID }) else { return }
+        Task {
+            let result = await captureResult("\(shellQuote(candidate)) -r 'echo PHP_VERSION;'", in: project.path, environmentProject: project)
+            guard result.succeeded, !result.output.trimmed.isEmpty else {
+                showAlert(title: "PHP could not start", message: concisePHPError(result.output))
+                return
+            }
+            guard selectedProjectID == projectID,
+                  let index = projects.firstIndex(where: { $0.id == projectID }) else { return }
+            projects[index].phpExecutablePath = candidate
+            projects[index].phpDetectionSource = "Manual"
+            projects[index].phpVersion = result.output.trimmed
+            saveProjects()
+            phpStatus = "PHP \(result.output.trimmed) · Manual"
+            await refreshProject()
+        }
     }
 
     func clearProjectPHPExecutable() {
@@ -2833,7 +2860,7 @@ final class AppStore {
 
     func validateSelectedPHP() async {
         guard let project = selectedProject else { return }
-        let selectedPath = project.phpExecutablePath ?? phpPath
+        let selectedPath = project.phpExecutablePath ?? ""
         guard !selectedPath.isEmpty else { phpStatus = "No PHP executable selected"; return }
         let result = await captureResult("\(shellQuote(selectedPath)) -r 'echo PHP_VERSION;'", in: project.path)
         if result.succeeded {
@@ -2861,8 +2888,16 @@ final class AppStore {
         var succeeded: Bool { exitCode == 0 }
     }
 
-    private func capture(_ command: String, in directory: String) async -> String {
-        await captureResult(command, in: directory).output
+    private func capture(
+        _ command: String,
+        in directory: String,
+        environmentProject: LaravelProject? = nil
+    ) async -> String {
+        await captureResult(
+            command,
+            in: directory,
+            environmentProject: environmentProject
+        ).output
     }
 
     private func captureResult(
@@ -2897,7 +2932,6 @@ final class AppStore {
            let projectPHP = project.phpExecutablePath, !projectPHP.isEmpty {
             candidates.append((projectPHP, project.phpDetectionSource ?? "Project"))
         }
-        if !phpPath.isEmpty { candidates.append((phpPath, "Global fallback")) }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         candidates += [
             ("\(home)/Library/Application Support/Herd/bin/php", "Herd"),
@@ -2936,7 +2970,7 @@ final class AppStore {
     private func resolvedProcessCommand(_ command: String) -> String {
         guard command.hasPrefix("php ") else { return command }
         let suffix = String(command.dropFirst(4))
-        let executable = selectedProject?.phpExecutablePath ?? phpPath
+        let executable = selectedProjectPHPExecutable
         return "\(shellQuote(executable)) \(suffix)"
     }
 
