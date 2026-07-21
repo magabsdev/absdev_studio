@@ -4,7 +4,7 @@ struct OverviewView: View {
     @Environment(AppStore.self) private var store
     @State private var containerStore = ContainerStore()
 
-    private let columns = [GridItem(.adaptive(minimum: 210), spacing: 14)]
+    private let columns = [GridItem(.adaptive(minimum: 190), spacing: 14)]
 
     var body: some View {
         ScrollView {
@@ -72,33 +72,13 @@ struct OverviewView: View {
                         MetricCard(title: "PHP", value: project.phpVersion, detail: "Active runtime", symbol: "chevron.left.forwardslash.chevron.right")
                         MetricCard(title: "Git branch", value: project.branch, detail: "Working tree clean", symbol: "point.3.connected.trianglepath.dotted")
                         MetricCard(title: "Environment", value: project.environment, detail: "APP_DEBUG enabled", symbol: "slider.horizontal.3")
+                        ProjectProfilesCard(
+                            profiles: store.capabilitySnapshot.profiles.sorted { $0.rawValue < $1.rawValue },
+                            symbol: profileSymbol
+                        )
                     }
-
 
                     OverviewPerformanceCounters(projectID: project.id)
-
-                    if !store.capabilitySnapshot.profiles.isEmpty {
-                        GroupBox {
-                            LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 8)], alignment: .leading, spacing: 8) {
-                                ForEach(store.capabilitySnapshot.profiles.sorted { $0.rawValue < $1.rawValue }) { profile in
-                                    Label(profile.rawValue, systemImage: profileSymbol(profile))
-                                        .font(.caption.weight(.semibold))
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 7)
-                                        .background(.quaternary, in: Capsule())
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        } label: {
-                            HStack {
-                                Text("Detected project profiles").font(.headline)
-                                Spacer()
-                                Text("Scanned once per refresh")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
 
                     if containerStore.runtimeAvailable && !containerStore.containers.isEmpty {
                         ContainerResourcesCard(store: containerStore)
@@ -270,7 +250,46 @@ private struct ContainerResourceRow: View {
     }
 }
 
-private struct OverviewRow: View {
+private struct ProjectProfilesCard: View {
+    let profiles: [LaravelProjectProfile]
+    let symbol: (LaravelProjectProfile) -> String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Project Profiles")
+                .font(.system(size: 15, weight: .semibold))
+
+            if profiles.isEmpty {
+                Text("No profiles detected")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 8)], alignment: .leading, spacing: 8) {
+                    ForEach(profiles) { profile in
+                        HStack(spacing: 7) {
+                            Image(systemName: symbol(profile))
+                                .font(.caption.weight(.semibold))
+                            Text(profile.rawValue)
+                                .font(.caption.weight(.semibold))
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                            Circle().fill(.green).frame(width: 7, height: 7)
+                        }
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 7)
+                        .background(.quaternary.opacity(0.75), in: Capsule())
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 132, alignment: .topLeading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 17, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 17, style: .continuous).stroke(.separator.opacity(0.42)))
+    }
+}
+
+struct OverviewRow: View {
     let symbol: String
     let title: String
     let detail: String

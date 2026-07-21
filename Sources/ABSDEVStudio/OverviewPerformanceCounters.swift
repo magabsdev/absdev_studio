@@ -58,10 +58,27 @@ final class OverviewPerformanceMonitor {
     var storageUsedText = "—"
     var storageFreeText = "—"
 
+    // Cached secondary metrics. These are populated off the main actor so SwiftUI
+    // never launches shell commands while evaluating a view body.
+    var activeNetworkInterface = "en0"
+    var networkIncomingText = "Calculating…"
+    var networkOutgoingText = "Calculating…"
+    var networkPingText = "Checking…"
+    var processCountText = "Calculating…"
+    var threadCountText = "Calculating…"
+    var batteryLevelText = "AC"
+    var batteryStatusText = "Connected"
+    var batteryRuntimeText = "Calculating…"
+    var cpuTemperatureText = "Normal"
+    var gpuTemperatureText = "Normal"
+    var fanSpeedText = "Fanless / N/A"
+
     private(set) var history: [PerformanceSample] = []
     private var samplingTask: Task<Void, Never>?
+    private var secondaryMetricsTask: Task<Void, Never>?
     private var saveTask: Task<Void, Never>?
     private var previousCPU: host_cpu_load_info_data_t?
+    private var previousNetworkBytes: (received: UInt64, sent: UInt64, date: Date)?
     private var activeProjectID: UUID?
     private var historyURL: URL?
 
@@ -72,6 +89,7 @@ final class OverviewPerformanceMonitor {
         historyURL = Self.historyURL(for: projectID)
         history = loadHistory()
         previousCPU = nil
+        previousNetworkBytes = nil
         if let latest = history.last {
             cpuPercent = latest.cpu
             memoryPercent = latest.memory
@@ -89,11 +107,23 @@ final class OverviewPerformanceMonitor {
                 self?.sample()
             }
         }
+
+        secondaryMetricsTask = Task { [weak self] in
+            guard let self else { return }
+            await self.refreshSecondaryMetrics()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(10))
+                guard !Task.isCancelled else { break }
+                await self.refreshSecondaryMetrics()
+            }
+        }
     }
 
     func stop() {
         samplingTask?.cancel()
         samplingTask = nil
+        secondaryMetricsTask?.cancel()
+        secondaryMetricsTask = nil
         saveTask?.cancel()
         saveTask = nil
         persistHistory()
@@ -177,6 +207,45 @@ final class OverviewPerformanceMonitor {
         } catch { }
     }
 
+    private func refreshSecondaryMetrics() async {
+        let snapshot = await Task.detached(priority: .utility) {
+            SecondaryMetricsSnapshot.collect()
+        }.value
+        guard !Task.isCancelled else { return }
+        activeNetworkInterface = snapshot.networkInterface
+        processCountText = snapshot.processCount
+        threadCountText = snapshot.threadCount
+        batteryLevelText = snapshot.batteryLevel
+        batteryStatusText = snapshot.batteryStatus
+        batteryRuntimeText = snapshot.batteryRuntime
+        networkPingText = snapshot.ping
+        cpuTemperatureText = snapshot.cpuTemperature
+        gpuTemperatureText = snapshot.gpuTemperature
+        fanSpeedText = snapshot.fanSpeed
+
+        let now = Date()
+        if let previous = previousNetworkBytes {
+            let elapsed = max(0.5, now.timeIntervalSince(previous.date))
+            let receivedDelta = snapshot.receivedBytes >= previous.received ? snapshot.receivedBytes - previous.received : 0
+            let sentDelta = snapshot.sentBytes >= previous.sent ? snapshot.sentBytes - previous.sent : 0
+            networkIncomingText = Self.formatRate(Double(receivedDelta) / elapsed)
+            networkOutgoingText = Self.formatRate(Double(sentDelta) / elapsed)
+        } else {
+            networkIncomingText = "0 KB/s"
+            networkOutgoingText = "0 KB/s"
+        }
+        previousNetworkBytes = (snapshot.receivedBytes, snapshot.sentBytes, now)
+    }
+
+    private static func formatRate(_ bytesPerSecond: Double) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .binary
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        formatter.includesUnit = true
+        formatter.isAdaptive = true
+        return "\(formatter.string(fromByteCount: Int64(max(0, bytesPerSecond))))/s"
+    }
+
     private func formatBytes(_ bytes: Double) -> String {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
@@ -252,6 +321,147 @@ final class OverviewPerformanceMonitor {
     }
 }
 
+private struct SecondaryMetricsSnapshot: Sendable {
+    let networkInterface: String
+    let receivedBytes: UInt64
+    let sentBytes: UInt64
+    let ping: String
+    let processCount: String
+    let threadCount: String
+    let batteryLevel: String
+    let batteryStatus: String
+    let batteryRuntime: String
+    let cpuTemperature: String
+    let gpuTemperature: String
+    let fanSpeed: String
+
+    static func collect() -> SecondaryMetricsSnapshot {
+        let psPids = shellOutput("/bin/ps", ["-axo", "pid="])
+        let processCountValue = psPids.split(separator: "\n").filter { Int($0.trimmingCharacters(in: .whitespaces)) != nil }.count
+
+        let psThreads = shellOutput("/bin/ps", ["-axo", "thcount="])
+        var threadTotal = psThreads
+            .split(separator: "\n")
+            .compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+            .reduce(0, +)
+        if threadTotal == 0 {
+            let threadRows = shellOutput("/bin/ps", ["-M", "-A", "-o", "pid="])
+            threadTotal = threadRows.split(separator: "\n").count
+        }
+
+        let battery = shellOutput("/usr/bin/pmset", ["-g", "batt"])
+        let batteryLevel: String
+        if let match = battery.range(of: #"\d+%"#, options: .regularExpression) {
+            batteryLevel = String(battery[match])
+        } else {
+            batteryLevel = "AC"
+        }
+
+        let lowerBattery = battery.lowercased()
+        let batteryStatus: String
+        if lowerBattery.contains("charging") || lowerBattery.contains("ac power") {
+            batteryStatus = "Charging"
+        } else if lowerBattery.contains("discharging") {
+            batteryStatus = "Battery"
+        } else {
+            batteryStatus = "Connected"
+        }
+
+        let batteryRuntime: String
+        if let match = battery.range(of: #"\d+:\d+ remaining"#, options: .regularExpression) {
+            batteryRuntime = String(battery[match]).replacingOccurrences(of: " remaining", with: "")
+        } else if lowerBattery.contains("charged") || lowerBattery.contains("ac power") {
+            batteryRuntime = "On AC"
+        } else {
+            batteryRuntime = "Unavailable"
+        }
+
+        let network = networkSnapshot()
+        let ping = pingLatency()
+        let thermal = thermalDescription()
+
+        return SecondaryMetricsSnapshot(
+            networkInterface: network.name,
+            receivedBytes: network.received,
+            sentBytes: network.sent,
+            ping: ping,
+            processCount: processCountValue > 0 ? "\(processCountValue)" : "Unavailable",
+            threadCount: threadTotal > 0 ? "\(threadTotal)" : "Unavailable",
+            batteryLevel: batteryLevel,
+            batteryStatus: batteryStatus,
+            batteryRuntime: batteryRuntime,
+            cpuTemperature: thermal,
+            gpuTemperature: thermal,
+            fanSpeed: fanDescription()
+        )
+    }
+
+    private static func networkSnapshot() -> (name: String, received: UInt64, sent: UInt64) {
+        var addresses: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&addresses) == 0, let first = addresses else { return ("en0", 0, 0) }
+        defer { freeifaddrs(addresses) }
+
+        var best: (name: String, received: UInt64, sent: UInt64)?
+        var current: UnsafeMutablePointer<ifaddrs>? = first
+        while let interface = current?.pointee {
+            defer { current = interface.ifa_next }
+            let flags = Int32(interface.ifa_flags)
+            guard (flags & IFF_UP) != 0, (flags & IFF_LOOPBACK) == 0,
+                  let name = String(validatingUTF8: interface.ifa_name), name.hasPrefix("en"),
+                  let dataPointer = interface.ifa_data else { continue }
+            let data = dataPointer.assumingMemoryBound(to: if_data.self).pointee
+            let candidate = (name, UInt64(data.ifi_ibytes), UInt64(data.ifi_obytes))
+            if best == nil || candidate.1 + candidate.2 > best!.received + best!.sent {
+                best = candidate
+            }
+        }
+        return best ?? ("en0", 0, 0)
+    }
+
+    private static func pingLatency() -> String {
+        let output = shellOutput("/sbin/ping", ["-c", "1", "-W", "1000", "1.1.1.1"])
+        guard let range = output.range(of: #"time[=<]([0-9.]+) ms"#, options: .regularExpression) else {
+            return "Offline"
+        }
+        let token = String(output[range])
+        let number = token.replacingOccurrences(of: "time=", with: "").replacingOccurrences(of: "time<", with: "").replacingOccurrences(of: " ms", with: "")
+        return "\(number) ms"
+    }
+
+    private static func thermalDescription() -> String {
+        switch ProcessInfo.processInfo.thermalState {
+        case .nominal: return "Normal"
+        case .fair: return "Warm"
+        case .serious: return "Hot"
+        case .critical: return "Critical"
+        @unknown default: return "Unavailable"
+        }
+    }
+
+    private static func fanDescription() -> String {
+        let model = shellOutput("/usr/sbin/sysctl", ["-n", "hw.model"]).lowercased()
+        if model.contains("macbookair") { return "Fanless" }
+        return "Unavailable"
+    }
+
+    private static func shellOutput(_ executable: String, _ arguments: [String]) -> String {
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            return String(data: data, encoding: .utf8) ?? ""
+        } catch {
+            return ""
+        }
+    }
+}
+
 private extension JSONEncoder {
     static var performanceEncoder: JSONEncoder {
         let encoder = JSONEncoder()
@@ -296,47 +506,71 @@ struct OverviewPerformanceCounters: View {
     }
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            // Wide windows: CPU and history remain prominent, while Storage is
-            // permanently grouped directly beneath Memory in the right column.
-            HStack(alignment: .top, spacing: 14) {
-                cpuCard
-                    .frame(minWidth: 360, maxWidth: .infinity)
-                    .layoutPriority(1)
-
-                historyCard
-                    .frame(minWidth: 420, maxWidth: .infinity)
-                    .layoutPriority(1)
-
-                VStack(spacing: 14) {
-                    memoryCard
-                    storageCard
+        VStack(alignment: .leading, spacing: 14) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 14) {
+                    cpuCard
+                        .frame(minWidth: 300, maxWidth: .infinity)
+                    historyCard
+                        .frame(minWidth: 390, maxWidth: .infinity)
+                    VStack(spacing: 14) {
+                        memoryCard
+                        storageCard
+                    }
+                    .frame(minWidth: 330, maxWidth: .infinity)
                 }
-                .frame(minWidth: 360, maxWidth: .infinity)
-            }
 
-            // Medium windows: two balanced columns, with Memory and Storage
-            // kept together so their relationship never breaks during resize.
-            HStack(alignment: .top, spacing: 14) {
+                HStack(alignment: .top, spacing: 14) {
+                    VStack(spacing: 14) {
+                        cpuCard
+                        historyCard
+                    }
+                    .frame(minWidth: 340, maxWidth: .infinity)
+
+                    VStack(spacing: 14) {
+                        memoryCard
+                        storageCard
+                    }
+                    .frame(minWidth: 340, maxWidth: .infinity)
+                }
+
                 VStack(spacing: 14) {
                     cpuCard
                     historyCard
-                }
-                .frame(minWidth: 360, maxWidth: .infinity)
-
-                VStack(spacing: 14) {
                     memoryCard
                     storageCard
                 }
-                .frame(minWidth: 340, maxWidth: .infinity)
             }
 
-            // Compact windows: a clean single-column stack.
-            VStack(spacing: 14) {
-                cpuCard
-                historyCard
-                memoryCard
-                storageCard
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 14) {
+                    networkCard
+                    processesCard
+                }
+                VStack(spacing: 14) {
+                    networkCard
+                    processesCard
+                }
+            }
+
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 14) {
+                    temperatureCard
+                    powerCard
+                    servicesCard
+                }
+                HStack(spacing: 14) {
+                    VStack(spacing: 14) {
+                        temperatureCard
+                        powerCard
+                    }
+                    servicesCard
+                }
+                VStack(spacing: 14) {
+                    temperatureCard
+                    powerCard
+                    servicesCard
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -546,6 +780,97 @@ struct OverviewPerformanceCounters: View {
             }
         }
         .frame(minHeight: 155)
+    }
+
+    private var networkCard: some View {
+        dashboardCard("Network") {
+            HStack(spacing: 0) {
+                compactStat(symbol: "arrow.down", value: monitor.networkIncomingText, label: "Incoming", tint: .green)
+                metricDivider
+                compactStat(symbol: "arrow.up", value: monitor.networkOutgoingText, label: "Outgoing", tint: .blue)
+                metricDivider
+                compactStat(symbol: "wifi", value: monitor.activeNetworkInterface, label: "Active", tint: .green)
+                metricDivider
+                compactStat(symbol: "waveform.path.ecg", value: monitor.networkPingText, label: "Ping", tint: .blue)
+            }
+        }
+        .frame(minHeight: 114)
+    }
+
+    private var processesCard: some View {
+        dashboardCard("Processes") {
+            HStack(spacing: 0) {
+                compactStat(symbol: "waveform.path.ecg", value: monitor.processCountText, label: "Running", tint: .mint)
+                metricDivider
+                compactStat(symbol: "circle.dotted", value: "\(monitor.cpuPercent.formatted(.number.precision(.fractionLength(1))))%", label: "CPU", tint: .green)
+                metricDivider
+                compactStat(symbol: "memorychip", value: monitor.memoryUsedText.components(separatedBy: " / ").first ?? "—", label: "Memory", tint: .cyan)
+                metricDivider
+                compactStat(symbol: "list.bullet", value: monitor.threadCountText, label: "Threads", tint: .teal)
+            }
+        }
+        .frame(minHeight: 114)
+    }
+
+    private var temperatureCard: some View {
+        dashboardCard("Temperature") {
+            HStack(spacing: 0) {
+                compactStat(symbol: "cpu", value: monitor.cpuTemperatureText, label: "CPU thermal", tint: .blue)
+                metricDivider
+                compactStat(symbol: "display", value: monitor.gpuTemperatureText, label: "GPU thermal", tint: .indigo)
+                metricDivider
+                compactStat(symbol: "fan.fill", value: monitor.fanSpeedText, label: "Fan", tint: .purple)
+            }
+        }
+        .frame(minHeight: 112)
+    }
+
+    private var powerCard: some View {
+        dashboardCard("Power") {
+            HStack(spacing: 0) {
+                compactStat(symbol: "battery.75percent", value: monitor.batteryLevelText, label: "Battery", tint: .green)
+                metricDivider
+                compactStat(symbol: "bolt.fill", value: monitor.batteryStatusText, label: "Status", tint: .yellow)
+                metricDivider
+                compactStat(symbol: "clock", value: monitor.batteryRuntimeText, label: "Est. runtime", tint: .cyan)
+            }
+        }
+        .frame(minHeight: 112)
+    }
+
+    private var servicesCard: some View {
+        dashboardCard("Services") {
+            HStack(spacing: 0) {
+                compactStat(symbol: "leaf.fill", value: "Active", label: "ServBay", tint: .green)
+                metricDivider
+                compactStat(symbol: "cylinder.fill", value: "PHP", label: "Runtime", tint: .cyan)
+                metricDivider
+                compactStat(symbol: "bolt.horizontal.circle.fill", value: "MySQL", label: "Database", tint: .blue)
+                metricDivider
+                compactStat(symbol: "hexagon.fill", value: "Nginx", label: "Web server", tint: .green)
+            }
+        }
+        .frame(minHeight: 112)
+    }
+
+    private func compactStat(symbol: String, value: String, label: String, tint: Color) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 25, weight: .medium))
+                .foregroundStyle(tint)
+                .frame(width: 30)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(value)
+                    .font(.callout.weight(.semibold).monospacedDigit())
+                    .lineLimit(1)
+                Text(label)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 8)
     }
 
     private var metricDivider: some View {
