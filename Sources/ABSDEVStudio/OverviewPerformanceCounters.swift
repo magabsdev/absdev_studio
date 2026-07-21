@@ -275,9 +275,6 @@ struct OverviewPerformanceCounters: View {
     @State private var selectedRange: PerformanceRange = .oneHour
     @State private var hoveredSample: PerformanceSample?
 
-    private let columns = [
-        GridItem(.adaptive(minimum: 360, maximum: 820), spacing: 14, alignment: .top)
-    ]
 
     private var visibleSamples: [PerformanceSample] {
         let sorted = monitor.samples(in: selectedRange).sorted { $0.date < $1.date }
@@ -299,13 +296,48 @@ struct OverviewPerformanceCounters: View {
     }
 
     var body: some View {
-        LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
-            cpuCard
-                .layoutPriority(1)
-            historyCard
-                .layoutPriority(1)
-            memoryCard
-            storageCard
+        ViewThatFits(in: .horizontal) {
+            // Wide windows: CPU and history remain prominent, while Storage is
+            // permanently grouped directly beneath Memory in the right column.
+            HStack(alignment: .top, spacing: 14) {
+                cpuCard
+                    .frame(minWidth: 360, maxWidth: .infinity)
+                    .layoutPriority(1)
+
+                historyCard
+                    .frame(minWidth: 420, maxWidth: .infinity)
+                    .layoutPriority(1)
+
+                VStack(spacing: 14) {
+                    memoryCard
+                    storageCard
+                }
+                .frame(minWidth: 360, maxWidth: .infinity)
+            }
+
+            // Medium windows: two balanced columns, with Memory and Storage
+            // kept together so their relationship never breaks during resize.
+            HStack(alignment: .top, spacing: 14) {
+                VStack(spacing: 14) {
+                    cpuCard
+                    historyCard
+                }
+                .frame(minWidth: 360, maxWidth: .infinity)
+
+                VStack(spacing: 14) {
+                    memoryCard
+                    storageCard
+                }
+                .frame(minWidth: 340, maxWidth: .infinity)
+            }
+
+            // Compact windows: a clean single-column stack.
+            VStack(spacing: 14) {
+                cpuCard
+                historyCard
+                memoryCard
+                storageCard
+            }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .task(id: projectID) {
