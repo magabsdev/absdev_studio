@@ -274,8 +274,18 @@ struct OverviewPerformanceCounters: View {
     @State private var monitor = OverviewPerformanceMonitor()
     @State private var selectedRange: PerformanceRange = .oneHour
 
-    private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
+    private let columns = [
+        GridItem(.flexible(), spacing: 14),
+        GridItem(.flexible(), spacing: 14)
+    ]
+
     private var visibleSamples: [PerformanceSample] { monitor.samples(in: selectedRange) }
+
+    private var chartDomain: ClosedRange<Date> {
+        let end = visibleSamples.last?.date ?? .now
+        let start = visibleSamples.first?.date ?? end.addingTimeInterval(-selectedRange.interval)
+        return start...max(end, start.addingTimeInterval(1))
+    }
 
     var body: some View {
         LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
@@ -293,19 +303,23 @@ struct OverviewPerformanceCounters: View {
 
     private var cpuCard: some View {
         dashboardCard("CPU Load") {
-            VStack(spacing: 10) {
-                CompactCPUGauge(value: monitor.cpuPercent)
-                    .frame(width: 205, height: 112)
+            VStack(spacing: 12) {
+                PolishedCPUGauge(value: monitor.cpuPercent)
+                    .frame(width: 230, height: 132)
+                    .frame(maxWidth: .infinity)
 
                 HStack(spacing: 0) {
                     metric("System", monitor.cpuSystemPercent, tint: .blue)
+                    metricDivider
                     metric("User", monitor.cpuUserPercent, tint: .green)
+                    metricDivider
                     metric("Nice", monitor.cpuNicePercent, tint: .purple)
+                    metricDivider
                     metric("Idle", monitor.cpuIdlePercent, tint: .secondary)
                 }
             }
         }
-        .frame(minHeight: 230)
+        .frame(minHeight: 245)
     }
 
     private var historyCard: some View {
@@ -315,40 +329,101 @@ struct OverviewPerformanceCounters: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 250)
+            .frame(width: 242)
             .controlSize(.small)
         }) {
-            Chart(visibleSamples) { sample in
-                AreaMark(x: .value("Time", sample.date), y: .value("CPU", sample.cpu))
-                    .interpolationMethod(.catmullRom)
-                    .foregroundStyle(.linearGradient(colors: [.green.opacity(0.55), .green.opacity(0.04)], startPoint: .top, endPoint: .bottom))
-                LineMark(x: .value("Time", sample.date), y: .value("CPU", sample.cpu))
-                    .interpolationMethod(.catmullRom)
-                    .lineStyle(StrokeStyle(lineWidth: 1.5))
-                    .foregroundStyle(.green)
+            Chart {
+                ForEach(visibleSamples) { sample in
+                    AreaMark(
+                        x: .value("Time", sample.date),
+                        y: .value("CPU", min(100, max(0, sample.cpu)))
+                    )
+                    .interpolationMethod(.monotone)
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [
+                                Color.green.opacity(0.52),
+                                Color.green.opacity(0.18),
+                                Color.green.opacity(0.025)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+
+                    LineMark(
+                        x: .value("Time", sample.date),
+                        y: .value("CPU", min(100, max(0, sample.cpu)))
+                    )
+                    .interpolationMethod(.monotone)
+                    .lineStyle(StrokeStyle(lineWidth: 1.65, lineCap: .round, lineJoin: .round))
+                    .foregroundStyle(Color.green)
+                }
+
+                RuleMark(y: .value("Current", min(100, max(0, monitor.cpuPercent))))
+                    .foregroundStyle(Color.green.opacity(0.16))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 4]))
             }
+            .chartXScale(domain: chartDomain)
             .chartYScale(domain: 0...100)
-            .chartXAxis(.hidden)
-            .chartYAxis {
-                AxisMarks(position: .trailing, values: [0, 50, 100]) { value in
-                    AxisGridLine().foregroundStyle(.secondary.opacity(0.18))
+            .chartXAxis {
+                AxisMarks(values: .automatic(desiredCount: 5)) { value in
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.6, dash: [3, 4]))
+                        .foregroundStyle(.secondary.opacity(0.13))
+                    AxisTick().foregroundStyle(.clear)
                     AxisValueLabel {
-                        if let number = value.as(Double.self) { Text("\(Int(number))%") }
+                        if let date = value.as(Date.self) {
+                            Text(axisLabel(for: date))
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
-            .frame(height: 145)
+            .chartYAxis {
+                AxisMarks(position: .trailing, values: [0, 25, 50, 75, 100]) { value in
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.7, dash: [4, 4]))
+                        .foregroundStyle(.secondary.opacity(0.15))
+                    AxisTick().foregroundStyle(.clear)
+                    AxisValueLabel {
+                        if let number = value.as(Double.self) {
+                            Text("\(Int(number))%")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .chartPlotStyle { plot in
+                plot
+                    .background(
+                        LinearGradient(
+                            colors: [.white.opacity(0.018), .clear],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            .frame(height: 160)
+            .animation(.easeInOut(duration: 0.35), value: visibleSamples.count)
         }
-        .frame(minHeight: 230)
+        .frame(minHeight: 245)
     }
 
     private var memoryCard: some View {
         dashboardCard("Memory") {
-            VStack(alignment: .leading, spacing: 16) {
-                CompactUsageBar(value: monitor.memoryPercent)
-                    .overlay(alignment: .trailing) {
-                        Text(monitor.memoryUsedText).font(.caption.weight(.semibold)).foregroundStyle(.secondary).offset(x: 2, y: -22)
-                    }
+            VStack(alignment: .leading, spacing: 15) {
+                HStack(alignment: .firstTextBaseline) {
+                    Spacer()
+                    Text(monitor.memoryUsedText)
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .frame(height: 2)
+
+                PolishedUsageBar(value: monitor.memoryPercent)
+
                 HStack(spacing: 0) {
                     textMetric("Pressure", "\(monitor.memoryPercent.formatted(.number.precision(.fractionLength(1))))%")
                     textMetric("App", monitor.memoryAppText)
@@ -362,11 +437,17 @@ struct OverviewPerformanceCounters: View {
 
     private var storageCard: some View {
         dashboardCard("Storage") {
-            VStack(alignment: .leading, spacing: 16) {
-                CompactUsageBar(value: monitor.storagePercent)
-                    .overlay(alignment: .trailing) {
-                        Text(monitor.storageUsedText).font(.caption.weight(.semibold)).foregroundStyle(.secondary).offset(x: 2, y: -22)
-                    }
+            VStack(alignment: .leading, spacing: 15) {
+                HStack(alignment: .firstTextBaseline) {
+                    Spacer()
+                    Text(monitor.storageUsedText)
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .frame(height: 2)
+
+                PolishedUsageBar(value: monitor.storagePercent)
+
                 HStack(spacing: 0) {
                     textMetric("Used", monitor.storageUsedText.components(separatedBy: " / ").first ?? "—")
                     textMetric("Free", monitor.storageFreeText)
@@ -377,14 +458,21 @@ struct OverviewPerformanceCounters: View {
         .frame(minHeight: 155)
     }
 
+    private var metricDivider: some View {
+        Rectangle()
+            .fill(.separator.opacity(0.35))
+            .frame(width: 1, height: 48)
+    }
+
     private func dashboardCard<Content: View, Trailing: View>(
         _ title: String,
         @ViewBuilder trailing: () -> Trailing,
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text(title).font(.headline)
+            HStack(spacing: 12) {
+                Text(title)
+                    .font(.system(size: 16, weight: .semibold))
                 Spacer()
                 trailing()
             }
@@ -392,8 +480,25 @@ struct OverviewPerformanceCounters: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(.separator.opacity(0.45)))
+        .background(
+            ZStack {
+                RoundedRectangle(cornerRadius: 17, style: .continuous)
+                    .fill(.regularMaterial)
+                RoundedRectangle(cornerRadius: 17, style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [.white.opacity(0.025), .clear],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+            }
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 17, style: .continuous)
+                .stroke(.separator.opacity(0.42), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.08), radius: 14, x: 0, y: 6)
     }
 
     private func dashboardCard<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
@@ -401,78 +506,147 @@ struct OverviewPerformanceCounters: View {
     }
 
     private func metric(_ title: String, _ value: Double, tint: Color) -> some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 5) {
-                Circle().fill(tint).frame(width: 6, height: 6)
-                Text(title).font(.caption).foregroundStyle(.secondary)
+        VStack(spacing: 5) {
+            HStack(spacing: 6) {
+                Circle().fill(tint).frame(width: 7, height: 7)
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             Text("\(value.formatted(.number.precision(.fractionLength(1))))%")
-                .font(.callout.weight(.semibold).monospacedDigit())
+                .font(.system(size: 16, weight: .semibold, design: .rounded).monospacedDigit())
         }
         .frame(maxWidth: .infinity)
     }
 
     private func textMetric(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            Text(value).font(.callout.monospacedDigit()).lineLimit(1)
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.callout.monospacedDigit())
+                .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
-}
 
-private struct CompactCPUGauge: View {
-    let value: Double
-    private var progress: Double { min(1, max(0, value / 100)) }
-
-    var body: some View {
-        ZStack(alignment: .bottom) {
-            Circle()
-                .trim(from: 0.125, to: 0.875)
-                .stroke(.quaternary, style: StrokeStyle(lineWidth: 16, lineCap: .round))
-                .rotationEffect(.degrees(90))
-
-            Circle()
-                .trim(from: 0.125, to: 0.125 + (0.75 * progress))
-                .stroke(
-                    AngularGradient(colors: [.green, .green, .yellow, .orange, .red], center: .center, startAngle: .degrees(135), endAngle: .degrees(405)),
-                    style: StrokeStyle(lineWidth: 16, lineCap: .round)
-                )
-                .rotationEffect(.degrees(90))
-                .animation(.easeOut(duration: 0.45), value: progress)
-
-            Rectangle()
-                .fill(.blue)
-                .frame(width: 72, height: 7)
-                .clipShape(Capsule())
-                .offset(x: 34)
-                .rotationEffect(.degrees(-135 + (270 * progress)), anchor: .leading)
-                .animation(.easeOut(duration: 0.45), value: progress)
-
-            Circle().fill(.blue).frame(width: 17, height: 17).offset(y: -9)
-
-            Text("\(value.formatted(.number.precision(.fractionLength(1))))%")
-                .font(.system(size: 28, weight: .bold, design: .rounded).monospacedDigit())
-                .offset(y: 14)
+    private func axisLabel(for date: Date) -> String {
+        switch selectedRange {
+        case .fiveMinutes, .oneHour:
+            return date.formatted(.dateTime.hour().minute())
+        case .oneDay:
+            return date.formatted(.dateTime.hour())
+        case .sevenDays:
+            return date.formatted(.dateTime.weekday(.abbreviated))
+        case .thirtyDays:
+            return date.formatted(.dateTime.day().month(.abbreviated))
         }
-        .padding(.horizontal, 10)
     }
 }
 
-private struct CompactUsageBar: View {
+private struct GaugeArc: Shape {
+    var startAngle: Angle
+    var endAngle: Angle
+
+    func path(in rect: CGRect) -> Path {
+        let radius = min(rect.width, rect.height * 2) / 2
+        let center = CGPoint(x: rect.midX, y: rect.maxY)
+        var path = Path()
+        path.addArc(
+            center: center,
+            radius: radius,
+            startAngle: startAngle,
+            endAngle: endAngle,
+            clockwise: false
+        )
+        return path
+    }
+}
+
+private struct PolishedCPUGauge: View {
+    let value: Double
+    private var progress: Double { min(1, max(0, value / 100)) }
+    private var needleAngle: Angle { .degrees(-150 + (120 * progress)) }
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            GaugeArc(startAngle: .degrees(200), endAngle: .degrees(340))
+                .stroke(.quaternary, style: StrokeStyle(lineWidth: 16, lineCap: .round))
+
+            GaugeArc(startAngle: .degrees(200), endAngle: .degrees(340))
+                .stroke(
+                    AngularGradient(
+                        colors: [.green, .green, .yellow, .orange, .red],
+                        center: .bottom,
+                        startAngle: .degrees(200),
+                        endAngle: .degrees(340)
+                    ),
+                    style: StrokeStyle(lineWidth: 16, lineCap: .round)
+                )
+
+            Capsule()
+                .fill(Color.blue)
+                .frame(width: 74, height: 7)
+                .shadow(color: .blue.opacity(0.3), radius: 4)
+                .offset(x: 35, y: -4)
+                .rotationEffect(needleAngle, anchor: .leading)
+                .animation(.spring(response: 0.45, dampingFraction: 0.78), value: progress)
+
+            Circle()
+                .fill(Color.blue)
+                .frame(width: 17, height: 17)
+                .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1))
+                .shadow(color: .blue.opacity(0.28), radius: 5)
+                .offset(y: -4)
+
+            Text("\(value.formatted(.number.precision(.fractionLength(1))))%")
+                .font(.system(size: 30, weight: .bold, design: .rounded).monospacedDigit())
+                .contentTransition(.numericText())
+                .offset(y: 34)
+        }
+        .padding(.horizontal, 9)
+        .padding(.top, 5)
+    }
+}
+
+private struct PolishedUsageBar: View {
     let value: Double
     private var progress: Double { min(1, max(0, value / 100)) }
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
-                Capsule().fill(.quaternary)
                 Capsule()
-                    .fill(LinearGradient(colors: [.green, .green, .yellow, .orange], startPoint: .leading, endPoint: .trailing))
-                    .frame(width: max(8, geometry.size.width * progress))
+                    .fill(.quaternary)
+                    .overlay(Capsule().stroke(.white.opacity(0.035), lineWidth: 1))
+
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            stops: [
+                                .init(color: .green, location: 0.0),
+                                .init(color: .green, location: 0.45),
+                                .init(color: .yellow, location: 0.72),
+                                .init(color: .orange, location: 0.88),
+                                .init(color: .red, location: 1.0)
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .frame(width: max(10, geometry.size.width * progress))
+                    .shadow(color: barGlow.opacity(0.24), radius: 4, x: 0, y: 1)
                     .animation(.easeOut(duration: 0.45), value: progress)
             }
         }
         .frame(height: 10)
+    }
+
+    private var barGlow: Color {
+        if progress > 0.9 { return .red }
+        if progress > 0.72 { return .orange }
+        if progress > 0.55 { return .yellow }
+        return .green
     }
 }
