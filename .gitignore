@@ -95,3 +95,4 @@ fastlane/test_output/
 *.profraw
 *.profdata
 coverage/
+Build/ReleaseAudit/
