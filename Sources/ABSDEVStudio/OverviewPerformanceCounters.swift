@@ -273,27 +273,41 @@ struct OverviewPerformanceCounters: View {
     let projectID: UUID
     @State private var monitor = OverviewPerformanceMonitor()
     @State private var selectedRange: PerformanceRange = .oneHour
+    @State private var hoveredSample: PerformanceSample?
 
     private let columns = [
-        GridItem(.flexible(), spacing: 14),
-        GridItem(.flexible(), spacing: 14)
+        GridItem(.adaptive(minimum: 360, maximum: 820), spacing: 14, alignment: .top)
     ]
 
-    private var visibleSamples: [PerformanceSample] { monitor.samples(in: selectedRange) }
+    private var visibleSamples: [PerformanceSample] {
+        let sorted = monitor.samples(in: selectedRange).sorted { $0.date < $1.date }
+        guard sorted.count > 2 else { return sorted }
+
+        // A small moving average removes sampling noise without inventing values.
+        return sorted.indices.map { index in
+            let lower = max(0, index - 2)
+            let upper = min(sorted.count - 1, index + 2)
+            let slice = sorted[lower...upper]
+            let cpu = slice.reduce(0) { $0 + $1.cpu } / Double(slice.count)
+            return PerformanceSample(id: sorted[index].id, date: sorted[index].date, cpu: cpu, memory: sorted[index].memory, storage: sorted[index].storage)
+        }
+    }
 
     private var chartDomain: ClosedRange<Date> {
-        let end = visibleSamples.last?.date ?? .now
-        let start = visibleSamples.first?.date ?? end.addingTimeInterval(-selectedRange.interval)
-        return start...max(end, start.addingTimeInterval(1))
+        let end = Date()
+        return end.addingTimeInterval(-selectedRange.interval)...end
     }
 
     var body: some View {
         LazyVGrid(columns: columns, alignment: .leading, spacing: 14) {
             cpuCard
+                .layoutPriority(1)
             historyCard
+                .layoutPriority(1)
             memoryCard
             storageCard
         }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
         .task(id: projectID) {
             monitor.configure(projectID: projectID)
             monitor.start()
@@ -305,7 +319,7 @@ struct OverviewPerformanceCounters: View {
         dashboardCard("CPU Load") {
             VStack(spacing: 12) {
                 PolishedCPUGauge(value: monitor.cpuPercent)
-                    .frame(width: 230, height: 132)
+                    .frame(width: 200, height: 116)
                     .frame(maxWidth: .infinity)
 
                 HStack(spacing: 0) {
@@ -319,7 +333,7 @@ struct OverviewPerformanceCounters: View {
                 }
             }
         }
-        .frame(minHeight: 245)
+        .frame(minHeight: 226)
     }
 
     private var historyCard: some View {
@@ -329,7 +343,7 @@ struct OverviewPerformanceCounters: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 242)
+            .frame(minWidth: 190, idealWidth: 242, maxWidth: 242)
             .controlSize(.small)
         }) {
             Chart {
@@ -338,7 +352,7 @@ struct OverviewPerformanceCounters: View {
                         x: .value("Time", sample.date),
                         y: .value("CPU", min(100, max(0, sample.cpu)))
                     )
-                    .interpolationMethod(.monotone)
+                    .interpolationMethod(.catmullRom)
                     .foregroundStyle(
                         LinearGradient(
                             colors: [
@@ -355,14 +369,10 @@ struct OverviewPerformanceCounters: View {
                         x: .value("Time", sample.date),
                         y: .value("CPU", min(100, max(0, sample.cpu)))
                     )
-                    .interpolationMethod(.monotone)
+                    .interpolationMethod(.catmullRom)
                     .lineStyle(StrokeStyle(lineWidth: 1.65, lineCap: .round, lineJoin: .round))
                     .foregroundStyle(Color.green)
                 }
-
-                RuleMark(y: .value("Current", min(100, max(0, monitor.cpuPercent))))
-                    .foregroundStyle(Color.green.opacity(0.16))
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 4]))
             }
             .chartXScale(domain: chartDomain)
             .chartYScale(domain: 0...100)
@@ -405,10 +415,58 @@ struct OverviewPerformanceCounters: View {
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
-            .frame(height: 160)
+            .chartOverlay { proxy in
+                GeometryReader { geometry in
+                    Rectangle()
+                        .fill(.clear)
+                        .contentShape(Rectangle())
+                        .onContinuousHover { phase in
+                            switch phase {
+                            case .active(let location):
+                                guard let plotFrame = proxy.plotFrame else { return }
+                                let frame = geometry[plotFrame]
+                                let x = location.x - frame.origin.x
+                                guard x >= 0, x <= frame.width,
+                                      let date: Date = proxy.value(atX: x) else { return }
+                                hoveredSample = visibleSamples.min { abs($0.date.timeIntervalSince(date)) < abs($1.date.timeIntervalSince(date)) }
+                            case .ended:
+                                hoveredSample = nil
+                            }
+                        }
+
+                    if let hoveredSample,
+                       let x = proxy.position(forX: hoveredSample.date),
+                       let y = proxy.position(forY: hoveredSample.cpu),
+                       let plotFrame = proxy.plotFrame {
+                        let frame = geometry[plotFrame]
+                        Path { path in
+                            path.move(to: CGPoint(x: frame.minX + x, y: frame.minY))
+                            path.addLine(to: CGPoint(x: frame.minX + x, y: frame.maxY))
+                        }
+                        .stroke(.white.opacity(0.30), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(hoveredSample.date.formatted(.dateTime.hour().minute().second()))
+                                .foregroundStyle(.secondary)
+                            Text("CPU \(hoveredSample.cpu.formatted(.number.precision(.fractionLength(1))))%")
+                                .fontWeight(.semibold)
+                        }
+                        .font(.caption2.monospacedDigit())
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 7).stroke(.white.opacity(0.12)))
+                        .position(
+                            x: min(max(frame.minX + x, frame.minX + 58), frame.maxX - 58),
+                            y: max(frame.minY + y - 34, frame.minY + 24)
+                        )
+                    }
+                }
+            }
+            .frame(minHeight: 150, idealHeight: 165, maxHeight: 185)
             .animation(.easeInOut(duration: 0.35), value: visibleSamples.count)
         }
-        .frame(minHeight: 245)
+        .frame(minHeight: 226)
     }
 
     private var memoryCard: some View {
@@ -478,7 +536,7 @@ struct OverviewPerformanceCounters: View {
             }
             content()
         }
-        .padding(18)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(
             ZStack {
@@ -564,49 +622,91 @@ private struct GaugeArc: Shape {
     }
 }
 
+private struct GaugeNeedle: Shape {
+    var progress: Double
+    var animatableData: Double {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let centre = CGPoint(x: rect.midX, y: rect.height * 0.67)
+        let radius = min(rect.width * 0.43, rect.height * 0.62) * 0.77
+        let angle = Angle.degrees(200 + (140 * min(1, max(0, progress))))
+        let endpoint = CGPoint(
+            x: centre.x + cos(angle.radians) * radius,
+            y: centre.y + sin(angle.radians) * radius
+        )
+        var path = Path()
+        path.move(to: centre)
+        path.addLine(to: endpoint)
+        return path
+    }
+}
+
 private struct PolishedCPUGauge: View {
     let value: Double
     private var progress: Double { min(1, max(0, value / 100)) }
-    private var needleAngle: Angle { .degrees(-150 + (120 * progress)) }
-
     var body: some View {
-        ZStack(alignment: .bottom) {
-            GaugeArc(startAngle: .degrees(200), endAngle: .degrees(340))
-                .stroke(.quaternary, style: StrokeStyle(lineWidth: 16, lineCap: .round))
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            let centre = CGPoint(x: width / 2, y: geometry.size.height * 0.67)
+            let radius = min(width * 0.43, geometry.size.height * 0.62)
 
-            GaugeArc(startAngle: .degrees(200), endAngle: .degrees(340))
+            ZStack {
+                Path { path in
+                    path.addArc(center: centre, radius: radius, startAngle: .degrees(200), endAngle: .degrees(340), clockwise: false)
+                }
+                .stroke(.quaternary, style: StrokeStyle(lineWidth: 14, lineCap: .round))
+
+                Path { path in
+                    path.addArc(center: centre, radius: radius, startAngle: .degrees(200), endAngle: .degrees(340), clockwise: false)
+                }
                 .stroke(
                     AngularGradient(
-                        colors: [.green, .green, .yellow, .orange, .red],
-                        center: .bottom,
+                        stops: [
+                            .init(color: .green, location: 0.00),
+                            .init(color: .green, location: 0.35),
+                            .init(color: .yellow, location: 0.56),
+                            .init(color: .orange, location: 0.76),
+                            .init(color: .red, location: 1.00)
+                        ],
+                        center: UnitPoint(x: 0.5, y: 0.67),
                         startAngle: .degrees(200),
                         endAngle: .degrees(340)
                     ),
-                    style: StrokeStyle(lineWidth: 16, lineCap: .round)
+                    style: StrokeStyle(lineWidth: 14, lineCap: .round)
                 )
+                .shadow(color: activeTint.opacity(0.20), radius: 6)
 
-            Capsule()
-                .fill(Color.blue)
-                .frame(width: 74, height: 7)
-                .shadow(color: .blue.opacity(0.3), radius: 4)
-                .offset(x: 35, y: -4)
-                .rotationEffect(needleAngle, anchor: .leading)
-                .animation(.spring(response: 0.45, dampingFraction: 0.78), value: progress)
+                GaugeNeedle(progress: progress)
+                    .stroke(
+                        LinearGradient(colors: [.blue.opacity(0.82), .blue], startPoint: .leading, endPoint: .trailing),
+                        style: StrokeStyle(lineWidth: 7, lineCap: .round)
+                    )
+                    .shadow(color: .blue.opacity(0.40), radius: 5)
+                    .animation(.spring(response: 0.42, dampingFraction: 0.82), value: progress)
 
-            Circle()
-                .fill(Color.blue)
-                .frame(width: 17, height: 17)
-                .overlay(Circle().stroke(.white.opacity(0.3), lineWidth: 1))
-                .shadow(color: .blue.opacity(0.28), radius: 5)
-                .offset(y: -4)
+                Circle()
+                    .fill(.blue)
+                    .frame(width: 16, height: 16)
+                    .overlay(Circle().stroke(.white.opacity(0.4), lineWidth: 1))
+                    .shadow(color: .blue.opacity(0.35), radius: 5)
+                    .position(centre)
 
-            Text("\(value.formatted(.number.precision(.fractionLength(1))))%")
-                .font(.system(size: 30, weight: .bold, design: .rounded).monospacedDigit())
-                .contentTransition(.numericText())
-                .offset(y: 34)
+                Text("\(value.formatted(.number.precision(.fractionLength(1))))%")
+                    .font(.system(size: 28, weight: .bold, design: .rounded).monospacedDigit())
+                    .contentTransition(.numericText())
+                    .position(x: centre.x, y: geometry.size.height - 8)
+            }
         }
-        .padding(.horizontal, 9)
-        .padding(.top, 5)
+    }
+
+    private var activeTint: Color {
+        if progress > 0.9 { return .red }
+        if progress > 0.7 { return .orange }
+        if progress > 0.5 { return .yellow }
+        return .green
     }
 }
 
