@@ -69,9 +69,6 @@ final class OverviewPerformanceMonitor {
     var batteryLevelText = "AC"
     var batteryStatusText = "Connected"
     var batteryRuntimeText = "Calculating…"
-    var cpuTemperatureText = "Normal"
-    var gpuTemperatureText = "Normal"
-    var fanSpeedText = "Fanless / N/A"
 
     private(set) var history: [PerformanceSample] = []
     private var samplingTask: Task<Void, Never>?
@@ -219,9 +216,6 @@ final class OverviewPerformanceMonitor {
         batteryStatusText = snapshot.batteryStatus
         batteryRuntimeText = snapshot.batteryRuntime
         networkPingText = snapshot.ping
-        cpuTemperatureText = snapshot.cpuTemperature
-        gpuTemperatureText = snapshot.gpuTemperature
-        fanSpeedText = snapshot.fanSpeed
 
         let now = Date()
         if let previous = previousNetworkBytes {
@@ -331,9 +325,6 @@ private struct SecondaryMetricsSnapshot: Sendable {
     let batteryLevel: String
     let batteryStatus: String
     let batteryRuntime: String
-    let cpuTemperature: String
-    let gpuTemperature: String
-    let fanSpeed: String
 
     static func collect() -> SecondaryMetricsSnapshot {
         let psPids = shellOutput("/bin/ps", ["-axo", "pid="])
@@ -378,7 +369,6 @@ private struct SecondaryMetricsSnapshot: Sendable {
 
         let network = networkSnapshot()
         let ping = pingLatency()
-        let thermal = thermalDescription()
 
         return SecondaryMetricsSnapshot(
             networkInterface: network.name,
@@ -389,10 +379,7 @@ private struct SecondaryMetricsSnapshot: Sendable {
             threadCount: threadTotal > 0 ? "\(threadTotal)" : "Unavailable",
             batteryLevel: batteryLevel,
             batteryStatus: batteryStatus,
-            batteryRuntime: batteryRuntime,
-            cpuTemperature: thermal,
-            gpuTemperature: thermal,
-            fanSpeed: fanDescription()
+            batteryRuntime: batteryRuntime
         )
     }
 
@@ -428,22 +415,6 @@ private struct SecondaryMetricsSnapshot: Sendable {
         return "\(number) ms"
     }
 
-    private static func thermalDescription() -> String {
-        switch ProcessInfo.processInfo.thermalState {
-        case .nominal: return "Normal"
-        case .fair: return "Warm"
-        case .serious: return "Hot"
-        case .critical: return "Critical"
-        @unknown default: return "Unavailable"
-        }
-    }
-
-    private static func fanDescription() -> String {
-        let model = shellOutput("/usr/sbin/sysctl", ["-n", "hw.model"]).lowercased()
-        if model.contains("macbookair") { return "Fanless" }
-        return "Unavailable"
-    }
-
     private static func shellOutput(_ executable: String, _ arguments: [String]) -> String {
         let process = Process()
         let output = Pipe()
@@ -461,6 +432,8 @@ private struct SecondaryMetricsSnapshot: Sendable {
         }
     }
 }
+
+
 
 private extension JSONEncoder {
     static var performanceEncoder: JSONEncoder {
@@ -555,19 +528,10 @@ struct OverviewPerformanceCounters: View {
 
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 14) {
-                    temperatureCard
                     powerCard
                     servicesCard
                 }
-                HStack(spacing: 14) {
-                    VStack(spacing: 14) {
-                        temperatureCard
-                        powerCard
-                    }
-                    servicesCard
-                }
                 VStack(spacing: 14) {
-                    temperatureCard
                     powerCard
                     servicesCard
                 }
@@ -810,19 +774,6 @@ struct OverviewPerformanceCounters: View {
             }
         }
         .frame(minHeight: 114)
-    }
-
-    private var temperatureCard: some View {
-        dashboardCard("Temperature") {
-            HStack(spacing: 0) {
-                compactStat(symbol: "cpu", value: monitor.cpuTemperatureText, label: "CPU thermal", tint: .blue)
-                metricDivider
-                compactStat(symbol: "display", value: monitor.gpuTemperatureText, label: "GPU thermal", tint: .indigo)
-                metricDivider
-                compactStat(symbol: "fan.fill", value: monitor.fanSpeedText, label: "Fan", tint: .purple)
-            }
-        }
-        .frame(minHeight: 112)
     }
 
     private var powerCard: some View {

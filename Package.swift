@@ -16,7 +16,8 @@ let package = Package(
             dependencies: [
                 .product(name: "SwiftTerm", package: "SwiftTerm")
             ],
-            path: "Sources/ABSDEVStudio"
+            path: "Sources/ABSDEVStudio",
+            linkerSettings: [.linkedFramework("IOKit")]
         ),
         .testTarget(
             name: "ABSDEVStudioTests",
